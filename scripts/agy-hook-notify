@@ -1,0 +1,135 @@
+#!/usr/bin/env python3
+import sys
+import json
+import os
+import re
+import urllib.request
+import urllib.parse
+import sqlite3
+
+def _load_env():
+    for p in (
+        "/run/media/paulobot/Datos/Projects/telegram-paulobot/.env",
+        os.path.expanduser("~/.config/telegram-bot/.env"),
+    ):
+        if os.path.isfile(p):
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    for raw in f:
+                        line = raw.strip()
+                        if line and not line.startswith("#") and "=" in line:
+                            k, v = line.split("=", 1)
+                            os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+            except Exception:
+                pass
+
+_load_env()
+TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", os.environ.get("TELEGRAM_AUTHORIZED_USER_ID", "")).strip()
+DB_PATH = os.path.expanduser("~/.gemini/antigravity-cli/conversation_summaries.db")
+
+def extract_task_and_summary(transcript_path):
+    user_task = ""
+    last_response = ""
+    if not transcript_path or not os.path.exists(transcript_path):
+        return "", ""
+
+    try:
+        with open(transcript_path, "r", encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                try:
+                    data = json.loads(line)
+                    t = data.get("type")
+                    if t == "USER_INPUT":
+                        content = data.get("content", "")
+                        m = re.search(r"<USER_REQUEST>(.*?)</USER_REQUEST>", content, re.DOTALL)
+                        if m:
+                            user_task = m.group(1).strip()
+                        else:
+                            user_task = content.strip()
+                    elif t == "PLANNER_RESPONSE":
+                        content = data.get("content")
+                        if content:
+                            last_response = content.strip()
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    user_task = re.sub(r"<[^>]+>", "", user_task).strip()
+    task_first_line = user_task.split("\n")[0].strip() if user_task else ""
+    if len(task_first_line) > 100:
+        task_first_line = task_first_line[:97] + "..."
+
+    desc = last_response
+    desc = re.sub(r"```.*?```", "", desc, flags=re.DOTALL)
+    desc = re.sub(r"`([^`]+)`", r"\1", desc)
+    desc = re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", desc)
+    desc = re.sub(r"[#*>\-_]", "", desc)
+    desc = " ".join(desc.split())
+    if len(desc) > 200:
+        desc = desc[:197] + "..."
+
+    return task_first_line, desc
+
+def send_telegram(text: str):
+    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+    payload = {
+        "chat_id": CHAT_ID,
+        "text": text[:4000],
+        "parse_mode": "Markdown"
+    }
+    try:
+        data = urllib.parse.urlencode(payload).encode("utf-8")
+        req = urllib.request.Request(url, data=data)
+        urllib.request.urlopen(req, timeout=5)
+    except Exception:
+        try:
+            payload.pop("parse_mode", None)
+            data = urllib.parse.urlencode(payload).encode("utf-8")
+            req = urllib.request.Request(url, data=data)
+            urllib.request.urlopen(req, timeout=5)
+        except Exception:
+            pass
+
+def main():
+    try:
+        raw_input = sys.stdin.read()
+        if not raw_input.strip():
+            print(json.dumps({}))
+            return
+
+        payload = json.loads(raw_input)
+        conv_id = payload.get("conversationId", "")
+        error = payload.get("error", "")
+        workspaces = payload.get("workspacePaths", [])
+        transcript_path = payload.get("transcriptPath", "")
+
+        ws_name = os.path.basename(workspaces[0]) if workspaces else "Workspace"
+        task_title, task_desc = extract_task_and_summary(transcript_path)
+
+        if not task_title:
+            task_title = "Tarea finalizada"
+
+        if error:
+            status_line = f"⚠️ **Advertencia:** `{error}`"
+        else:
+            status_line = "✓ **[Antigravity]**"
+
+        msg_lines = [status_line, f"📌 **Tarea:** {task_title}"]
+        if task_desc:
+            msg_lines.append(f"📝 **Descripción:** {task_desc}")
+        msg_lines.append(f"📂 **Espacio:** `{ws_name}`")
+
+        send_telegram("\n\n".join(msg_lines))
+
+    except Exception:
+        pass
+
+    # Responder al contrato del hook de Stop
+    print(json.dumps({}))
+
+if __name__ == "__main__":
+    main()

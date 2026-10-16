@@ -1,0 +1,18 @@
+[Unit]
+Description=Telegram Bot for Antigravity (AGY)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python -u /run/media/paulobot/Datos/Projects/telegram-paulobot/bot.py
+WorkingDirectory=/run/media/paulobot/Datos/Projects/telegram-paulobot
+Restart=on-failure
+RestartSec=3
+Environment=PATH=/home/paulobot/.local/bin:/home/paulobot/.gemini/antigravity-cli/bin:/usr/local/sbin:/usr/local/bin:/usr/bin:/bin
+Environment=HOME=/home/paulobot
+EnvironmentFile=-/run/media/paulobot/Datos/Projects/telegram-paulobot/.env
+StandardOutput=append:/home/paulobot/.local/state/telegram-bot.log
+StandardError=append:/home/paulobot/.local/state/telegram-bot.log
+
+[Install]
+WantedBy=default.target
