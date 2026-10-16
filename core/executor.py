@@ -215,11 +215,12 @@ class AGYExecutionManager:
             "--dangerously-skip-permissions",
         ]
 
-        if job.effort:
-            command.extend(["--effort", job.effort])
-
         if job.model:
             command.extend(["--model", job.model])
+            if not job.model.lower().endswith(("-low", "-medium", "-high")) and job.effort:
+                command.extend(["--effort", job.effort])
+        elif job.effort:
+            command.extend(["--effort", job.effort])
 
         if job.conv_id and job.conv_id not in ("LATEST", "NEW"):
             command.extend(["--conversation", job.conv_id])

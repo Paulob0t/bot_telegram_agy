@@ -61,9 +61,15 @@ class BotSessionState:
             effort = str(data.get("current_effort", "low")).lower()
             self.current_effort = effort if effort in VALID_EFFORTS else "low"
 
-            # 2. Restaurar modelo
+            # 2. Restaurar modelo y sincronizar esfuerzo si el modelo ya incluye sufijo
             model = data.get("current_model", None)
             self.current_model = str(model).strip() if model else None
+            if self.current_model:
+                lower_m = self.current_model.lower()
+                for eff in ("low", "medium", "high"):
+                    if lower_m.endswith(f"-{eff}"):
+                        self.current_effort = eff
+                        break
 
             # 3. Restaurar directorio de trabajo (cwd)
             saved_cwd = data.get("current_cwd", HOME_DIR)
@@ -160,6 +166,12 @@ class BotSessionState:
 
     def set_model(self, model_id: Optional[str]):
         self.current_model = model_id if (model_id and model_id != "DEFAULT") else None
+        if self.current_model:
+            lower_m = self.current_model.lower()
+            for eff in ("low", "medium", "high"):
+                if lower_m.endswith(f"-{eff}"):
+                    self.current_effort = eff
+                    break
         self.save_state()
 
     def set_effort(self, effort_level: str) -> bool:
@@ -167,6 +179,18 @@ class BotSessionState:
         if clean not in VALID_EFFORTS:
             return False
         self.current_effort = clean
+        if self.current_model:
+            lower_m = self.current_model.lower()
+            for suffix in ("-low", "-medium", "-high"):
+                if lower_m.endswith(suffix):
+                    base = self.current_model[: -len(suffix)]
+                    target_suffix = clean if clean in ("low", "medium", "high") else "high"
+                    # gpt-oss-120b only exists as medium
+                    if "gpt-oss" in base.lower():
+                        self.current_model = f"{base}-medium"
+                    else:
+                        self.current_model = f"{base}-{target_suffix}"
+                    break
         self.save_state()
         return True
 

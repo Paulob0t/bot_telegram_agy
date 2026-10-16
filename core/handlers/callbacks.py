@@ -228,6 +228,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             query.message,
             f"✅ **Modelo configurado y guardado:**\n\n"
             f"• 🤖 **Modelo activo:** {eff_disp}\n"
+            f"• ⚡ **Esfuerzo sincronizado:** `{session_state.current_effort.upper()}`\n"
             f"• 🪟 **Ventana de contexto:** `{ctx_win:,}` tokens",
         )
         return
@@ -235,7 +236,12 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     if data.startswith("eff:"):
         target = data[4:]
         session_state.set_effort(target)
-        await safe_edit(query.message, f"✅ **Nivel de razonamiento guardado:** `{target.upper()}`")
+        eff_disp, _ = get_effective_model_display()
+        await safe_edit(
+            query.message,
+            f"✅ **Nivel de razonamiento guardado:** `{target.upper()}`\n"
+            f"• 🤖 **Modelo activo:** {eff_disp}",
+        )
         return
 
     if data.startswith("power:"):
