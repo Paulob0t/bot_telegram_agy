@@ -3,10 +3,8 @@ import glob
 import time
 import tempfile
 import asyncio
-import subprocess
 from typing import Optional, Tuple
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from core.state import session_state
 
 
 def _get_wayland_env() -> dict:
@@ -25,20 +23,6 @@ def _get_wayland_env() -> dict:
             env["WAYLAND_DISPLAY"] = "wayland-1"
 
     return env
-
-
-def is_screen_locked() -> bool:
-    """Detecta si la sesión de escritorio está bloqueada con hyprlock."""
-    try:
-        res = subprocess.run(
-            ["pgrep", "-x", "hyprlock"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=1.5,
-        )
-        return res.returncode == 0
-    except Exception:
-        return False
 
 
 async def capture_wayland_screenshot() -> Tuple[bool, str]:
@@ -81,44 +65,3 @@ def build_screenshot_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton("🗑️ Borrar Captura", callback_data="screen:delete"),
         ]
     ])
-
-
-def build_dnd_dashboard() -> Tuple[InlineKeyboardMarkup, str]:
-    """Construye el panel interactivo para controlar el Modo No Molestar (/dnd) del puente DBus."""
-    mode = session_state.dnd_mode
-    locked = is_screen_locked()
-    lock_status = "🔒 Bloqueada (`hyprlock` activo)" if locked else "🔓 Desbloqueada (en uso)"
-
-    mode_labels = {
-        "off": "🔔 **Siempre Activo** *(Reenvía todas las notificaciones al celular)*",
-        "auto": "🤖 **Inteligente / Auto** *(Silencia mientras usas la PC; reenvía si está bloqueada con `hyprlock`)*",
-        "on": "🔕 **No Molestar (Silenciado)** *(No reenvía notificaciones de escritorio)*",
-    }
-
-    if mode == "on":
-        effective = "🔕 Silenciado actualmente"
-    elif mode == "auto":
-        effective = "🔔 Reenviando (PC bloqueada)" if locked else "🔕 Silenciado (estás usando la PC)"
-    else:
-        effective = "🔔 Reenviando todo"
-
-    text = (
-        "🔔 **Control de Notificaciones de Escritorio (`/dnd`)**\n\n"
-        f"• 📌 **Modo configurado:** {mode_labels.get(mode, mode)}\n"
-        f"• 🖥️ **Pantalla de la PC:** {lock_status}\n"
-        f"• 📡 **Estado efectivo ahora:** `{effective}`\n\n"
-        "*Elige cómo quieres que se comporte el puente de notificaciones de tu laptop:*"
-    )
-
-    options = [
-        ("🔔 Siempre Activo (Off)", "off"),
-        ("🤖 Auto (Solo con PC bloqueada / hyprlock)", "auto"),
-        ("🔕 No Molestar (Silenciar todo)", "on"),
-    ]
-    keyboard = []
-    for label, code in options:
-        prefix = "✅ " if code == mode else ""
-        keyboard.append([InlineKeyboardButton(f"{prefix}{label}", callback_data=f"dnd:set:{code}")])
-
-    keyboard.append([InlineKeyboardButton("🔄 Actualizar Estado", callback_data="dnd:refresh")])
-    return InlineKeyboardMarkup(keyboard), text

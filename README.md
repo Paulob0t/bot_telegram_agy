@@ -2,7 +2,6 @@
 
 Asistente remoto de **Google Antigravity (`agy`)** y centro de control para servidor de desarrollo en Linux (Wayland / Hyprland) accesible desde Telegram.
 
-Permite interactuar en tiempo real con **AGY CLI** mediante streaming JSON, cambiar entre repositorios locales con un toque, tomar capturas de pantalla remotas con `grim` y sincronizar notificaciones de escritorio DBus con detección automática de bloqueo de pantalla (`hyprlock`).
 
 ---
 
@@ -21,7 +20,6 @@ Permite interactuar en tiempo real con **AGY CLI** mediante streaming JSON, camb
    - Soporta búsqueda rápida por coincidencia parcial (`/cd wicode-b` activa `wicode-backend` al instante; `/cd wicode` muestra botones con las coincidencias).
 
 3. **💾 Persistencia Atómica de Sesión (`telegram_bot_state.json`):**
-   - Guarda automáticamente en `~/.gemini/antigravity-cli/telegram_bot_state.json` (mediante escritura atómica `tempfile` + `os.replace`) el directorio activo (`current_cwd`), el modelo seleccionado (`current_model`), el nivel de esfuerzo (`current_effort`), el chat activo (`current_conversation_id`) y el modo No Molestar (`dnd_mode`).
    - Al reiniciar el servicio `systemd` o la laptop, restaura toda tu configuración sin perder contexto.
 
 4. **🤖 Catálogo Dinámico de Modelos (`agy models`) y Cálculo Real de Contexto (`/usage`):**
@@ -33,11 +31,8 @@ Permite interactuar en tiempo real con **AGY CLI** mediante streaming JSON, camb
    - **Inspector de herramientas en vivo (`format_step_tool_activity`):** Muestra en tiempo real qué comando está corriendo (`run_command`), qué archivo está leyendo/editando (`view_file`, `edit_file`, `create_file`) o qué está buscando AGY.
    - **División inteligente (`split_markdown_chunks`):** Cuando la respuesta final supera los 4000 caracteres, divide por párrafos (`\n\n`) o saltos de línea (`\n`), cerrando el bloque ```` ```lenguaje ```` al final de un mensaje y reabriéndolo automáticamente con el mismo lenguaje al inicio del siguiente.
 
-8. **📸 Captura de Pantalla Remota (`/screen` o `/ss`) y Puente DBus con `/dnd`:**
    - `/screen` ejecuta `grim` sobre el display Wayland activo y envía una captura PNG del escritorio de la laptop al chat de Telegram.
-   - `/dnd` controla el puente `telegram-notify-bridge.py` en tres modos:
      - `🔔 Siempre Activo (off)`: Reenvía todas las notificaciones del sistema al celular.
-     - `🤖 Inteligente / Auto (auto)`: Silencia notificaciones mientras usas la laptop y las reenvía automáticamente cuando la sesión está bloqueada con **`hyprlock`**.
      - `🔕 No Molestar (on)`: Silencia todas las notificaciones de escritorio.
 
 ---
@@ -58,14 +53,11 @@ telegram-paulobot/
 │   ├── executor.py                 # AGYExecutionManager: cola FIFO, streaming JSON y control de grupos de procesos (PGID)
 │   ├── projects.py                 # Descubrimiento de proyectos, paginación y resolución difusa para /cd
 │   ├── models.py                   # Catálogo dinámico sincronizado con `agy models` y ventanas de contexto
-│   ├── desktop_tools.py            # Captura Wayland con `grim` (/screen) y panel No Molestar (/dnd)
 │   ├── chats_db.py                 # Historial paginado y eliminación de conversaciones en SQLite
 │   └── handlers/
 │       ├── __init__.py
-│       ├── commands.py             # Handlers de todos los comandos de AGY, proyectos, /screen y /dnd
 │       └── callbacks.py            # Enrutador modular de CallbackQuery (botones inline)
 ├── scripts/
-│   ├── telegram-notify-bridge.py   # Puente asíncrono de notificaciones DBus -> Telegram con soporte /dnd y hyprlock
 │   ├── agy-hook-notify             # Hook de finalización de tareas de AGY
 │   └── notify-telegram             # Utilidad CLI para enviar alertas desde terminal o pipes
 └── systemd/
@@ -80,7 +72,6 @@ telegram-paulobot/
 ### 1. Requisitos del Sistema
 - **Python 3.10+** y `python-telegram-bot`
 - **Google Antigravity CLI (`agy`)** instalado en `~/.local/bin/agy`
-- **Wayland / Hyprland:** `grim` (para `/screen`) y `hyprlock` (para detección automática en `/dnd`)
 
 ### 2. Configurar Variables de Entorno (`.env`)
 Copia la plantilla `.env.example` a `.env` y restringe sus permisos a `600`:
@@ -122,7 +113,6 @@ systemctl --user enable --now telegram-notify-bridge.service
 | `/start` | `/help`, `/ayuda` | Muestra el panel general de ayuda y el estado actual |
 | `/project` | `/cd`, `/workspace`, `/repo` | Abre el selector de proyectos o cambia rápido (`/cd wicode-b`) |
 | `/screen` | `/ss`, `/captura` | Toma una captura de pantalla del escritorio Wayland (`grim`) y la envía al chat |
-| `/dnd` | `/notificaciones`, `/mute` | Configura notificaciones de escritorio (`off` \| `auto` con `hyprlock` \| `on`) |
 | `/queue` | `/cola` | Muestra la tarea en ejecución y la cola de mensajes en espera |
 | `/cancel` | `/stop`, `/cancelar` | Cancela el árbol de procesos de la tarea activa de AGY |
 | `/model` | `/modelo` | Cambia el modelo de IA o sincroniza el catálogo con `agy models` (`/model sync`) |

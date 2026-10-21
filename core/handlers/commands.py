@@ -1,6 +1,7 @@
 import os
 import shutil
 import time
+import tempfile
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from core.state import session_state
@@ -22,7 +23,6 @@ from core.models import (
 from core.desktop_tools import (
     capture_wayland_screenshot,
     build_screenshot_keyboard,
-    build_dnd_dashboard,
 )
 from core.executor import execution_manager
 from core.message_buffer import long_message_buffer
@@ -44,8 +44,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• 📁 `/project` o `/cd` - Elegir repositorio de trabajo con un toque\n"
         "• ⚡ `/cd <nombre>` - Cambiar directo (ej. `/cd wicode-back`, `/cd ~`)\n\n"
         "🖥️ **Control Remoto de PC & Escritorio:**\n"
-        "• 📸 `/screen` o `/ss` - Captura de pantalla en vivo de tu laptop (Wayland)\n"
-        "• 🔔 `/dnd` - Modo No Molestar / Auto-silencio con `hyprlock`\n\n"
+        "• 📸 `/screen` o `/ss` - Captura de pantalla en vivo de tu laptop (Wayland)\n\n"
         "🛠️ **Comandos de AGY:**\n"
         "• 📊 `/usage` o `/tokens` - Ver capacidad y consumo de tokens\n"
         "• 📂 `/resume` o `/chats` - Historial paginado de chats\n"
@@ -61,7 +60,6 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• 🔌 `/off` o `/power` - Apagar bot de Telegram\n\n"
         f"📂 **Proyecto activo:** `{cwd_short}`{branch_str}\n"
         f"📍 **Chat actual:** `{session_state.current_conversation_title}`\n"
-        f"🔔 **Notificaciones PC (`/dnd`):** `{session_state.dnd_mode.upper()}`\n"
         f"⚡ **Esfuerzo:** `{session_state.current_effort.upper()}` | **Modelo:** {model_disp}"
     )
     await safe_reply(update.message, msg)
@@ -498,36 +496,30 @@ async def cmd_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
 
 
-async def cmd_dnd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Controla el Modo No Molestar (/dnd: off | auto | on) para el puente DBus de notificaciones."""
-    if not is_authorized(update):
-        return
-
-    if context.args and len(context.args) > 0:
-        arg = context.args[0].strip().lower()
-        alias_map = {
-            "on": "on",
-            "silencio": "on",
-            "mute": "on",
-            "off": "off",
-            "all": "off",
-            "siempre": "off",
-            "auto": "auto",
-            "smart": "auto",
-            "hyprlock": "auto",
-        }
-        if arg in alias_map:
-            session_state.set_dnd_mode(alias_map[arg])
-
-    markup, text = build_dnd_dashboard()
-    await safe_reply(update.message, text, reply_markup=markup)
-
-
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_authorized(update) or not update.message or not update.message.text:
+    if not is_authorized(update) or not update.message:
         return
 
-    prompt = update.message.text.strip()
+    text_prompt = (update.message.text or "").strip()
+    caption_prompt = (update.message.caption or "").strip()
+    prompt = text_prompt or caption_prompt
+
+    # Si el mensaje incluye foto
+    if update.message.photo:
+        try:
+            largest_photo = update.message.photo[-1]
+            file = await largest_photo.get_file()
+            tmp_img = os.path.join(tempfile.gettempdir(), f"telegram_photo_{largest_photo.file_unique_id}.jpg")
+            await file.download_to_drive(tmp_img)
+
+            if prompt:
+                prompt = f"[Foto adjunta guardada en: {tmp_img}]\n\n{prompt}"
+            else:
+                prompt = f"[Foto adjunta guardada en: {tmp_img}]\nPor favor analiza esta imagen."
+        except Exception as e:
+            await safe_reply(update.message, f"⚠️ Error descargando la imagen: `{e}`")
+            return
+
     if not prompt:
         return
 

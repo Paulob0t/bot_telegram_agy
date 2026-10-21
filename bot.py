@@ -15,7 +15,6 @@ from core.handlers.commands import (
     cmd_start,
     cmd_project,
     cmd_screen,
-    cmd_dnd,
     cmd_usage,
     cmd_resume,
     cmd_delete,
@@ -58,15 +57,12 @@ def main():
     # Guardia global de autorización (grupo -1 corre antes que todos los handlers)
     application.add_handler(TypeHandler(Update, auth_guard), group=-1)
 
-    # Comandos de Proyecto, Captura (/screen) y DND (/dnd)
+    # Comandos de Proyecto y Captura (/screen)
     application.add_handler(
         CommandHandler(["project", "cd", "workspace", "dir", "repo", "proyectos"], cmd_project)
     )
     application.add_handler(
         CommandHandler(["screen", "ss", "screenshot", "captura", "pantalla"], cmd_screen)
-    )
-    application.add_handler(
-        CommandHandler(["dnd", "notificaciones", "mute", "nomolestar"], cmd_dnd)
     )
 
     # Comandos Generales de AGY
@@ -87,8 +83,8 @@ def main():
     # Callbacks interactivos
     application.add_handler(CallbackQueryHandler(handle_callback_query))
 
-    # Mensajes de texto normales
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    # Mensajes de texto normales y fotos
+    application.add_handler(MessageHandler((filters.TEXT | filters.PHOTO) & ~filters.COMMAND, handle_message))
 
     print("Bot listo y a la escucha (Modular + Proyectos + Cola Concurrente).")
     application.run_polling()

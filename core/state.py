@@ -7,7 +7,6 @@ from typing import Optional
 from core.config import HOME_DIR, DB_PATH, USAGE_CACHE_PATH, STATE_CACHE_PATH, logger
 
 VALID_EFFORTS = ("low", "medium", "high", "xhigh", "max")
-VALID_DND_MODES = ("off", "auto", "on")
 
 
 class BotSessionState:
@@ -22,7 +21,6 @@ class BotSessionState:
         self.current_model: Optional[str] = None  # None = por defecto o ID específico
         self.current_effort: str = "low"  # low, medium, high, xhigh, max
         self.current_cwd: str = HOME_DIR  # Directorio de trabajo activo para AGY
-        self.dnd_mode: str = "off"  # off = enviar siempre, auto = solo con hyprlock/bloqueado, on = silenciar
         self.updated_at: Optional[float] = None
         self.last_usage_data: dict = {}
 
@@ -96,15 +94,11 @@ class BotSessionState:
                     self.current_conversation_id = None
                     self.current_conversation_title = "🔄 Continuar último chat activo (-c)"
 
-            # 5. Restaurar modo No Molestar (DND)
-            saved_dnd = str(data.get("dnd_mode", "off")).lower()
-            self.dnd_mode = saved_dnd if saved_dnd in VALID_DND_MODES else "off"
-
             self.updated_at = data.get("updated_at", time.time())
             logger.info(
                 f"Estado restaurado desde {STATE_CACHE_PATH}: "
                 f"cwd='{self.current_cwd}', model='{self.current_model or 'DEFAULT'}', "
-                f"effort='{self.current_effort}', dnd='{self.dnd_mode}'"
+                f"effort='{self.current_effort}'"
             )
         except Exception as e:
             logger.warning(f"No se pudo cargar estado previo del bot ({STATE_CACHE_PATH}): {e}")
@@ -121,7 +115,6 @@ class BotSessionState:
                 "current_model": self.current_model,
                 "current_effort": self.current_effort,
                 "current_cwd": self.current_cwd,
-                "dnd_mode": self.dnd_mode,
                 "updated_at": self.updated_at,
             }
             fd, tmp_path = tempfile.mkstemp(dir=state_dir, prefix=".bot_state_", suffix=".tmp")
@@ -191,14 +184,6 @@ class BotSessionState:
                     else:
                         self.current_model = f"{base}-{target_suffix}"
                     break
-        self.save_state()
-        return True
-
-    def set_dnd_mode(self, mode: str) -> bool:
-        clean = mode.strip().lower()
-        if clean not in VALID_DND_MODES:
-            return False
-        self.dnd_mode = clean
         self.save_state()
         return True
 

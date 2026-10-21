@@ -27,7 +27,6 @@ from core.models import (
 from core.desktop_tools import (
     capture_wayland_screenshot,
     build_screenshot_keyboard,
-    build_dnd_dashboard,
 )
 from core.executor import execution_manager
 from core.chat_guard import chat_guard
@@ -305,20 +304,5 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                     os.remove(result)
                 except Exception:
                     pass
-        return
-
-    # =========================================================
-    # 🔔 CALLBACKS DE MODO NO MOLESTAR (/dnd)
-    # =========================================================
-    if data == "dnd:refresh":
-        markup, text = build_dnd_dashboard()
-        await safe_edit(query.message, text, reply_markup=markup)
-        return
-
-    if data.startswith("dnd:set:"):
-        mode = data[8:]
-        session_state.set_dnd_mode(mode)
-        markup, text = build_dnd_dashboard()
-        await safe_edit(query.message, text, reply_markup=markup)
         return
 
