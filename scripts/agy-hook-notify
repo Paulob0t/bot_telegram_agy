@@ -58,21 +58,41 @@ def extract_task_and_summary(transcript_path):
     except Exception:
         pass
 
-    user_task = re.sub(r"<[^>]+>", "", user_task).strip()
-    task_first_line = user_task.split("\n")[0].strip() if user_task else ""
-    if len(task_first_line) > 100:
-        task_first_line = task_first_line[:97] + "..."
+    return shorten_title(user_task), shorten_summary(last_response)
 
-    desc = last_response
+
+TITLE_MAX = 45
+SUMMARY_MAX = 80
+
+
+def _clip(text, limit):
+    if len(text) <= limit:
+        return text
+    cut = text[:limit].rsplit(" ", 1)[0]
+    return cut.rstrip(" ,;:.") + "…"
+
+
+def shorten_title(user_task):
+    """Primera línea del pedido, sin etiquetas, recortada a TITLE_MAX."""
+    user_task = re.sub(r"<[^>]+>", "", user_task or "").strip()
+    first = user_task.split("\n")[0].strip() if user_task else ""
+    return _clip(first, TITLE_MAX)
+
+
+def shorten_summary(response):
+    """Solo la primera oración de la respuesta final, sin markdown, recortada a SUMMARY_MAX."""
+    desc = response or ""
     desc = re.sub(r"```.*?```", "", desc, flags=re.DOTALL)
     desc = re.sub(r"`([^`]+)`", r"\1", desc)
     desc = re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", desc)
-    desc = re.sub(r"[#*>\-_]", "", desc)
-    desc = " ".join(desc.split())
-    if len(desc) > 200:
-        desc = desc[:197] + "..."
-
-    return task_first_line, desc
+    desc = re.sub(r"[#*>_|]", "", desc)
+    # Primera línea con contenido real (ignora separadores y viñetas vacías)
+    lines = [l.strip(" -•\t") for l in desc.splitlines()]
+    lines = [l for l in lines if len(l) > 2 and set(l) - set("-=")]
+    first = lines[0] if lines else ""
+    # Primera oración de esa línea
+    first = re.split(r"(?<=[.!?])\s", first, maxsplit=1)[0]
+    return _clip(" ".join(first.split()), SUMMARY_MAX)
 
 def send_telegram(text: str):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
@@ -113,17 +133,15 @@ def main():
         if not task_title:
             task_title = "Tarea finalizada"
 
-        if error:
-            status_line = f"⚠️ **Advertencia:** `{error}`"
-        else:
-            status_line = "✓ **[Antigravity]**"
-
-        msg_lines = [status_line, f"📌 **Tarea:** {task_title}"]
+        # Formato compacto: 2-3 líneas cortas
+        icon = "⚠️" if error else "✓"
+        msg_lines = [f"{icon} *{task_title}* · `{ws_name}`"]
         if task_desc:
-            msg_lines.append(f"📝 **Descripción:** {task_desc}")
-        msg_lines.append(f"📂 **Espacio:** `{ws_name}`")
+            msg_lines.append(task_desc)
+        if error:
+            msg_lines.append(f"`{_clip(str(error), 60)}`")
 
-        send_telegram("\n\n".join(msg_lines))
+        send_telegram("\n".join(msg_lines))
 
     except Exception:
         pass

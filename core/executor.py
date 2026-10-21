@@ -18,6 +18,16 @@ from core.utils import (
     format_step_tool_activity,
     split_markdown_chunks,
 )
+from core.chats_db import get_all_conversations
+
+
+def _get_latest_conversation():
+    """(conversation_id, title) del chat de AGY modificado más recientemente, o None."""
+    rows = get_all_conversations()
+    if not rows:
+        return None
+    conv_id, title, _ = rows[0]
+    return conv_id, (title or "").strip().replace("\n", " ")
 
 
 @dataclass
@@ -133,15 +143,29 @@ class AGYExecutionManager:
         await self.cancel_active()
         return True
 
-    async def submit(self, prompt: str, message_obj: Any):
+    async def submit(
+        self,
+        prompt: str,
+        message_obj: Any,
+        model_override: Optional[str] = None,
+        effort_override: Optional[str] = None,
+    ):
+        chosen_model = model_override if model_override else session_state.current_model
+        chosen_effort = effort_override if effort_override else session_state.current_effort
+        if chosen_model:
+            for eff in ("low", "medium", "high"):
+                if chosen_model.lower().endswith(f"-{eff}"):
+                    chosen_effort = eff
+                    break
+
         job = QueuedJob(
             job_id=uuid.uuid4().hex[:8],
             prompt=prompt,
             message_obj=message_obj,
             conv_id=session_state.current_conversation_id,
             conv_title=session_state.current_conversation_title,
-            model=session_state.current_model,
-            effort=session_state.current_effort,
+            model=chosen_model,
+            effort=chosen_effort,
             cwd=session_state.current_cwd,
         )
 
@@ -185,6 +209,24 @@ class AGYExecutionManager:
             )
             job.queue_notice_msg = notice
 
+    def _pin_conversation_after_run(self, job: "QueuedJob") -> Optional[str]:
+        """
+        Si el job corrió con -c o como chat nuevo, toma el chat más reciente de la
+        base de AGY y lo fija como chat activo. Solo lo hace si el usuario no
+        eligió otro chat mientras corría. Retorna el título fijado o None.
+        """
+        if job.conv_id not in (None, "NEW", "LATEST"):
+            return None
+        if session_state.current_conversation_id is not None:
+            return None
+        latest = _get_latest_conversation()
+        if not latest:
+            return None
+        conv_id, title = latest[0], latest[1]
+        session_state.set_conversation(conv_id, f"💬 {title}")
+        logger.info("Chat fijado tras ejecución: %s (%s)", title, conv_id)
+        return title
+
     async def _worker_loop(self):
         while True:
             async with self._lock:
@@ -207,7 +249,6 @@ class AGYExecutionManager:
 
     async def _execute_single_job(self, job: QueuedJob):
         prompt = job.prompt
-
         command = [
             AGY_BIN,
             "-p", prompt,
@@ -229,7 +270,9 @@ class AGYExecutionManager:
             chat_label = "Nuevo Chat"
         else:
             command.append("-c")
-            chat_label = "Último Chat Activo"
+            # Mostrar el título real del último chat en vez de un genérico
+            latest = _get_latest_conversation()
+            chat_label = f"💬 {latest[1]}" if latest else "Último Chat Activo"
 
         exec_cwd = job.cwd if (job.cwd and os.path.isdir(job.cwd)) else HOME_DIR
         cwd_short = session_state.get_cwd_short_name(exec_cwd)
@@ -352,6 +395,17 @@ class AGYExecutionManager:
                 final_output = "✅ Tarea completada."
 
             chunks = split_markdown_chunks(final_output, max_chars=3900)
+
+            # Fijar el chat concreto usado: así el siguiente mensaje no depende de
+            # "-c" (que podría apuntar a otra sesión abierta desde la laptop).
+            pinned_title = self._pin_conversation_after_run(job)
+            footer_title = pinned_title or job.conv_title or chat_label
+            footer = f"\n\n— 💬 _{footer_title.lstrip('💬➕🔄 ').strip()[:60]}_ • 📂 `{cwd_short}`"
+            if len(chunks[-1]) + len(footer) <= 4000:
+                chunks[-1] = chunks[-1] + footer
+            else:
+                chunks.append(footer.strip())
+
             first_chunk = chunks[0]
 
             if status_msg:

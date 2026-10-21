@@ -5,7 +5,6 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from core.state import session_state
 from core.utils import is_authorized, safe_reply, safe_edit, format_uptime, get_git_branch
-from core.tunnels import tunnel_manager
 from core.chats_db import build_resume_keyboard, build_delete_keyboard
 from core.projects import (
     build_projects_keyboard,
@@ -20,14 +19,14 @@ from core.models import (
     sync_models_from_cli,
     get_context_window_for_model,
 )
-from core.dev_services import build_dev_dashboard
-from core.git_tools import build_git_dashboard, run_git_cmd, is_git_repo
 from core.desktop_tools import (
     capture_wayland_screenshot,
     build_screenshot_keyboard,
     build_dnd_dashboard,
 )
 from core.executor import execution_manager
+from core.message_buffer import long_message_buffer
+from core.chat_guard import chat_guard
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -40,19 +39,13 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     msg = (
         "👋 **¡Hola Paulo! Soy tu asistente de Antigravity (AGY)** ⚡\n\n"
-        "✨ *Streaming real-time, selector de proyectos, cola concurrente y Cloudflare Tunnels.*\n\n"
-        "🗂️ **Proyectos, Git & Servidores (`/dev`):**\n"
-        "• 🛠️ `/dev` o `/wicode` - Iniciar/detener WiCode Fullstack, túneles y logs\n"
-        "• 🐙 `/git` - Status, diff, log, pull y push rápido sin gastar tokens\n"
+        "✨ *Streaming real-time, selector de proyectos y cola concurrente.*\n\n"
+        "🗂️ **Proyectos:**\n"
         "• 📁 `/project` o `/cd` - Elegir repositorio de trabajo con un toque\n"
         "• ⚡ `/cd <nombre>` - Cambiar directo (ej. `/cd wicode-back`, `/cd ~`)\n\n"
         "🖥️ **Control Remoto de PC & Escritorio:**\n"
         "• 📸 `/screen` o `/ss` - Captura de pantalla en vivo de tu laptop (Wayland)\n"
         "• 🔔 `/dnd` - Modo No Molestar / Auto-silencio con `hyprlock`\n\n"
-        "☁️ **Túneles Cloudflare (trycloudflare.com):**\n"
-        "• 🔗 `/tunnel <puerto>` o `/share <puerto>` - Exponer web local a internet\n"
-        "• 📋 `/tunnels` - Ver túneles activos y enlaces\n"
-        "• 🛑 `/stop_tunnel <puerto>` / `/stop_all` - Cerrar túneles\n\n"
         "🛠️ **Comandos de AGY:**\n"
         "• 📊 `/usage` o `/tokens` - Ver capacidad y consumo de tokens\n"
         "• 📂 `/resume` o `/chats` - Historial paginado de chats\n"
@@ -369,9 +362,6 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         ram_str = "N/D"
 
-    tunnels = tunnel_manager.list_tunnels()
-    tunnels_str = f"{len(tunnels)} activos (Cloudflare)" if tunnels else "Ninguno"
-
     if execution_manager.is_busy():
         elapsed = format_uptime(execution_manager.get_active_elapsed())
         active_preview = (
@@ -395,7 +385,6 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• **Estado AGY:** {status_agy}\n"
         f"• **Cola de Mensajes:** {queue_str}\n"
         f"• **Proyecto (`cwd`):** `{cwd_short}`{branch_str}\n"
-        f"• **Túneles Cloudflare:** {tunnels_str}\n"
         f"• **Chat actual:** {session_state.current_conversation_title}\n"
         f"• **Memoria RAM:** {ram_str}\n"
         f"• **Disco (/home):** {disk_used} usados / {disk_free} libres (Total: {disk_total})"
@@ -476,47 +465,6 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_reply(update.message, "ℹ️ No hay ninguna tarea ejecutándose ni mensajes en cola en este momento.")
 
 
-async def cmd_dev(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Panel interactivo /dev para gestionar servicios locales de WiCode, túneles y logs."""
-    if not is_authorized(update):
-        return
-    markup, text = build_dev_dashboard()
-    await safe_reply(update.message, text, reply_markup=markup)
-
-
-async def cmd_git(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Comando rápido /git sin gastar tokens de AGY.
-    Soporta:
-      - /git (abre el panel interactivo con git status -sb)
-      - /git commit <mensaje> (hace git add -A && git commit -m "<mensaje>" y ofrece botón de Push)
-      - /git status | diff | log | pull | push
-    """
-    if not is_authorized(update):
-        return
-
-    cwd = session_state.current_cwd
-    if not is_git_repo(cwd):
-        markup, text = await build_git_dashboard()
-        await safe_reply(update.message, text, reply_markup=markup)
-        return
-
-    args = context.args or []
-    if len(args) > 0:
-        sub = args[0].strip().lower()
-        if sub == "commit" and len(args) > 1:
-            commit_msg = " ".join(args[1:]).strip()
-            await run_git_cmd(["add", "-A"], cwd=cwd)
-            code, out = await run_git_cmd(["commit", "-m", commit_msg], cwd=cwd)
-            title = "✅ Commit creado (`git add -A && git commit`)" if code == 0 else "⚠️ Resultado de `git commit`"
-            markup, text = await build_git_dashboard(custom_title=title, cmd_output=out or "Sin salida.")
-            await safe_reply(update.message, text, reply_markup=markup)
-            return
-
-    markup, text = await build_git_dashboard()
-    await safe_reply(update.message, text, reply_markup=markup)
-
-
 async def cmd_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Toma una captura de pantalla del escritorio de la PC con grim y la envía por Telegram."""
     if not is_authorized(update):
@@ -583,4 +531,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not prompt:
         return
 
-    await execution_manager.submit(prompt, update.message)
+    # Mensajes > LONG_MESSAGE_THRESHOLD: esperar fragmentos y unirlos.
+    # Todo pasa por chat_guard, que pregunta el chat si hubo inactividad.
+    buffered = await long_message_buffer.handle(
+        update.message.chat_id, prompt, update.message, chat_guard_submit
+    )
+    if buffered:
+        return
+
+    await chat_guard_submit(prompt, update.message)
+
+
+async def chat_guard_submit(prompt: str, message_obj):
+    await chat_guard.handle(prompt, message_obj, execution_manager.submit)
+

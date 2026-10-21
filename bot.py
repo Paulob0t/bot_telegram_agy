@@ -1,24 +1,19 @@
 import sys
+from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
+    ApplicationHandlerStop,
     ContextTypes,
     CommandHandler,
     MessageHandler,
     CallbackQueryHandler,
+    TypeHandler,
     filters,
 )
 from core.config import TOKEN, AUTHORIZED_USER_ID, logger
-from core.handlers.tunnel_commands import (
-    cmd_tunnel,
-    cmd_tunnels_status,
-    cmd_stop_tunnel,
-    cmd_stop_all_tunnels,
-)
 from core.handlers.commands import (
     cmd_start,
     cmd_project,
-    cmd_dev,
-    cmd_git,
     cmd_screen,
     cmd_dnd,
     cmd_usage,
@@ -45,21 +40,27 @@ async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYP
     logger.error("Excepción en bot de Telegram:", exc_info=context.error)
 
 
+async def auth_guard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Corta cualquier update de usuarios no autorizados antes de llegar a los handlers."""
+    user = update.effective_user
+    if user is None or user.id != AUTHORIZED_USER_ID:
+        if user is not None:
+            logger.warning("Update bloqueado de usuario no autorizado: %s", user.id)
+        raise ApplicationHandlerStop
+
+
 def main():
     print(f"Iniciando Bot de Telegram Modular AGY (Autorizado: {AUTHORIZED_USER_ID})...")
     application = ApplicationBuilder().token(TOKEN).concurrent_updates(True).build()
 
     application.add_error_handler(global_error_handler)
 
-    # Comandos de Proyecto, Git, Servidores (/dev), Captura (/screen) y DND (/dnd)
+    # Guardia global de autorización (grupo -1 corre antes que todos los handlers)
+    application.add_handler(TypeHandler(Update, auth_guard), group=-1)
+
+    # Comandos de Proyecto, Captura (/screen) y DND (/dnd)
     application.add_handler(
         CommandHandler(["project", "cd", "workspace", "dir", "repo", "proyectos"], cmd_project)
-    )
-    application.add_handler(
-        CommandHandler(["dev", "wicode", "services", "servers"], cmd_dev)
-    )
-    application.add_handler(
-        CommandHandler(["git", "g"], cmd_git)
     )
     application.add_handler(
         CommandHandler(["screen", "ss", "screenshot", "captura", "pantalla"], cmd_screen)
@@ -67,12 +68,6 @@ def main():
     application.add_handler(
         CommandHandler(["dnd", "notificaciones", "mute", "nomolestar"], cmd_dnd)
     )
-
-    # Comandos de Túneles Web (Cloudflare)
-    application.add_handler(CommandHandler(["tunnel", "share", "tunel", "expo", "cloud", "cf"], cmd_tunnel))
-    application.add_handler(CommandHandler(["tunnels", "tunnels_status", "tuneles"], cmd_tunnels_status))
-    application.add_handler(CommandHandler(["stop_tunnel", "stoptunnel", "closetunnel"], cmd_stop_tunnel))
-    application.add_handler(CommandHandler(["stop_all", "stopall", "cerrartodos"], cmd_stop_all_tunnels))
 
     # Comandos Generales de AGY
     application.add_handler(CommandHandler(["start", "help", "ayuda"], cmd_start))
@@ -95,7 +90,7 @@ def main():
     # Mensajes de texto normales
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("Bot listo y a la escucha (Modular + Proyectos + Cola Concurrente + Cloudflare Tunnels).")
+    print("Bot listo y a la escucha (Modular + Proyectos + Cola Concurrente).")
     application.run_polling()
 
 

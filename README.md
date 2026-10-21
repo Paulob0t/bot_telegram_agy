@@ -2,7 +2,7 @@
 
 Asistente remoto de **Google Antigravity (`agy`)** y centro de control para servidor de desarrollo en Linux (Wayland / Hyprland) accesible desde Telegram.
 
-Permite interactuar en tiempo real con **AGY CLI** mediante streaming JSON, cambiar entre repositorios locales con un toque, levantar/detener entornos fullstack (**WiCode Backend + Frontend + Cloud SQL Proxy**), exponer puertos locales mediante **Cloudflare Quick Tunnels (`trycloudflare.com`)**, ejecutar comandos rápidos de **Git** sin consumir tokens, tomar capturas de pantalla remotas con `grim` y sincronizar notificaciones de escritorio DBus con detección automática de bloqueo de pantalla (`hyprlock`).
+Permite interactuar en tiempo real con **AGY CLI** mediante streaming JSON, cambiar entre repositorios locales con un toque, tomar capturas de pantalla remotas con `grim` y sincronizar notificaciones de escritorio DBus con detección automática de bloqueo de pantalla (`hyprlock`).
 
 ---
 
@@ -33,15 +33,6 @@ Permite interactuar en tiempo real con **AGY CLI** mediante streaming JSON, camb
    - **Inspector de herramientas en vivo (`format_step_tool_activity`):** Muestra en tiempo real qué comando está corriendo (`run_command`), qué archivo está leyendo/editando (`view_file`, `edit_file`, `create_file`) o qué está buscando AGY.
    - **División inteligente (`split_markdown_chunks`):** Cuando la respuesta final supera los 4000 caracteres, divide por párrafos (`\n\n`) o saltos de línea (`\n`), cerrando el bloque ```` ```lenguaje ```` al final de un mensaje y reabriéndolo automáticamente con el mismo lenguaje al inicio del siguiente.
 
-6. **🛠️ Panel de Servicios de Desarrollo (`/dev` o `/wicode`):**
-   - Inicia o detiene con un toque **Cloud SQL Proxy (`:5433`)**, **WiCode Backend (`:3000`)** y **WiCode Frontend (`:5173`)**.
-   - Detecta puertos TCP abiertos tanto si los procesos fueron lanzados desde el bot como desde una terminal externa.
-   - Abre ambos túneles HTTPS de Cloudflare (`5173` + `3000`) con un solo botón y permite inspeccionar logs recientes o escanear errores (`error`, `exception`, `prisma`, `eaddrinuse`).
-
-7. **🐙 Comandos Rápidos de Git sin Gastar Tokens (`/git` o `/g`):**
-   - Ejecuta `git status -sb`, `git diff --stat`, `git log -n 5`, `git branch -vv`, `git pull` y `git push` (con previsualización de commits pendientes y botón de confirmación) directamente sobre el repositorio activo.
-   - Atajo rápido `/git commit <mensaje>` para hacer `git add -A && git commit -m "<mensaje>"`.
-
 8. **📸 Captura de Pantalla Remota (`/screen` o `/ss`) y Puente DBus con `/dnd`:**
    - `/screen` ejecuta `grim` sobre el display Wayland activo y envía una captura PNG del escritorio de la laptop al chat de Telegram.
    - `/dnd` controla el puente `telegram-notify-bridge.py` en tres modos:
@@ -67,15 +58,11 @@ telegram-paulobot/
 │   ├── executor.py                 # AGYExecutionManager: cola FIFO, streaming JSON y control de grupos de procesos (PGID)
 │   ├── projects.py                 # Descubrimiento de proyectos, paginación y resolución difusa para /cd
 │   ├── models.py                   # Catálogo dinámico sincronizado con `agy models` y ventanas de contexto
-│   ├── dev_services.py             # DevServiceManager para iniciar/detener WiCode Fullstack y leer logs (/dev)
-│   ├── git_tools.py                # Ejecución rápida de Git y dashboard interactivo (/git)
 │   ├── desktop_tools.py            # Captura Wayland con `grim` (/screen) y panel No Molestar (/dnd)
-│   ├── tunnels.py                  # CloudflareTunnelManager para túneles HTTPS (trycloudflare.com)
 │   ├── chats_db.py                 # Historial paginado y eliminación de conversaciones en SQLite
 │   └── handlers/
 │       ├── __init__.py
-│       ├── commands.py             # Handlers de todos los comandos de AGY, proyectos, Git, /dev, /screen y /dnd
-│       ├── tunnel_commands.py      # Handlers de comandos de Cloudflare Tunnels (/tunnel, /tunnels, /stop_all)
+│       ├── commands.py             # Handlers de todos los comandos de AGY, proyectos, /screen y /dnd
 │       └── callbacks.py            # Enrutador modular de CallbackQuery (botones inline)
 ├── scripts/
 │   ├── telegram-notify-bridge.py   # Puente asíncrono de notificaciones DBus -> Telegram con soporte /dnd y hyprlock
@@ -93,7 +80,6 @@ telegram-paulobot/
 ### 1. Requisitos del Sistema
 - **Python 3.10+** y `python-telegram-bot`
 - **Google Antigravity CLI (`agy`)** instalado en `~/.local/bin/agy`
-- **Cloudflared** (`cloudflared`) para túneles HTTPS rápidos
 - **Wayland / Hyprland:** `grim` (para `/screen`) y `hyprlock` (para detección automática en `/dnd`)
 
 ### 2. Configurar Variables de Entorno (`.env`)
@@ -135,8 +121,6 @@ systemctl --user enable --now telegram-notify-bridge.service
 | :--- | :--- | :--- |
 | `/start` | `/help`, `/ayuda` | Muestra el panel general de ayuda y el estado actual |
 | `/project` | `/cd`, `/workspace`, `/repo` | Abre el selector de proyectos o cambia rápido (`/cd wicode-b`) |
-| `/dev` | `/wicode`, `/services` | Panel para iniciar/detener WiCode Fullstack, abrir túneles y ver logs/errores |
-| `/git` | `/g` | Panel rápido de Git (`status`, `diff`, `log`, `pull`, `push`, `/git commit <msg>`) |
 | `/screen` | `/ss`, `/captura` | Toma una captura de pantalla del escritorio Wayland (`grim`) y la envía al chat |
 | `/dnd` | `/notificaciones`, `/mute` | Configura notificaciones de escritorio (`off` \| `auto` con `hyprlock` \| `on`) |
 | `/queue` | `/cola` | Muestra la tarea en ejecución y la cola de mensajes en espera |
@@ -149,9 +133,5 @@ systemctl --user enable --now telegram-notify-bridge.service
 | `/continue` | `/continuar` | Configura el envío en modo `-c` (continuar última conversación activa) |
 | `/new` | `/nuevo` | Configura el siguiente mensaje para abrir un hilo de conversación nuevo |
 | `/current` | `/actual` | Muestra el resumen de configuración persistente activa |
-| `/status` | `/estado` | Muestra estado de AGY, cola, RAM, disco y túneles activos |
-| `/tunnel <puerto>` | `/share`, `/cf` | Expone un puerto local a internet mediante Cloudflare Quick Tunnels |
-| `/tunnels` | `/tunnels_status` | Lista todos los túneles Cloudflare activos con botones para abrir o cerrar |
-| `/stop_tunnel <p>` | `/stoptunnel` | Detiene el túnel Cloudflare del puerto indicado |
-| `/stop_all` | `/cerrartodos` | Cierra todos los túneles Cloudflare activos |
+| `/status` | `/estado` | Muestra estado de AGY, cola, RAM y disco |
 | `/off` | `/power`, `/shutdown` | Apaga de forma segura el servicio `telegram-bot.service` |
