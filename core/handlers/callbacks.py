@@ -21,7 +21,6 @@ from core.models import (
     build_models_keyboard,
     get_effective_model_display,
     get_models_catalog,
-    get_low_models_catalog,
     sync_models_from_cli,
 )
 from core.desktop_tools import (
@@ -34,7 +33,8 @@ from core.chat_guard import chat_guard
 
 async def shutdown_bot_service():
     await asyncio.sleep(1.0)
-    os.system("systemctl --user stop telegram-bot.service")
+    proc = await asyncio.create_subprocess_exec("systemctl", "--user", "stop", "telegram-bot.service")
+    await proc.wait()
 
 
 async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -51,6 +51,32 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     # =========================================================
     # 🧭 CALLBACKS DE GUARDIA DE CHAT (confirmar chat tras inactividad)
     # =========================================================
+    if data.startswith("cg_pick:"):
+        _, hold_id, page_str = data.split(":", 2)
+        view = chat_guard.build_picker_view(hold_id, page=int(page_str))
+        if view:
+            markup, text = view
+            await safe_edit(query.message, text, reply_markup=markup)
+        else:
+            await safe_edit(query.message, "⌛ Esta pregunta expiró o no hay chats guardados.")
+        return
+
+    if data.startswith("cg_back:"):
+        hold_id = data.split(":", 1)[1]
+        view = chat_guard.build_prompt_view(hold_id)
+        if view:
+            markup, text = view
+            await safe_edit(query.message, text, reply_markup=markup)
+        else:
+            await safe_edit(query.message, "⌛ Esta pregunta expiró. Reenvía el mensaje.")
+        return
+
+    if data.startswith("cg_sel:"):
+        _, hold_id, idx_str = data.split(":", 2)
+        result = await chat_guard.resolve("sel", hold_id, execution_manager.submit, chat_idx=int(idx_str))
+        await safe_edit(query.message, result or "⌛ Esta pregunta expiró. Reenvía el mensaje.")
+        return
+
     if data.startswith(("cg_cont:", "cg_new:", "cg_drop:")):
         action_key, hold_id = data.split(":", 1)
         action = {"cg_cont": "cont", "cg_new": "new", "cg_drop": "drop"}[action_key]
@@ -162,13 +188,16 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         target = data[4:]
         if target == "LATEST":
             session_state.set_conversation(None, "🔄 Continuar último chat activo (-c)")
+            chat_guard.touch()
             await safe_edit(query.message, "✅ **Configurado y guardado:** Ahora enviarás mensajes a la **última conversación activa**.")
         elif target == "NEW":
             session_state.set_conversation("NEW", "➕ Nuevo chat independiente")
+            chat_guard.touch()
             await safe_edit(query.message, "✅ **Configurado y guardado:** El siguiente mensaje creará un **nuevo chat limpio**.")
         else:
             title = get_conversation_title(target)
             session_state.set_conversation(target, f"💬 {title}")
+            chat_guard.touch()
             await safe_edit(
                 query.message,
                 f"✅ **Chat seleccionado y guardado:**\n**{title}**\n\n*(ID: `{target}`)*\n\nCualquier mensaje que envíes continuará en este hilo.",

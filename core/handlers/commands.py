@@ -308,6 +308,7 @@ async def cmd_continue(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
         return
     session_state.set_conversation(None, "🔄 Continuar último chat activo (-c)")
+    chat_guard.touch()
     await safe_reply(update.message, "✅ Modo configurado y guardado: **Continuar última conversación activa**.")
 
 
@@ -315,6 +316,7 @@ async def cmd_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
         return
     session_state.set_conversation("NEW", "➕ Nuevo chat independiente")
+    chat_guard.touch()
     await safe_reply(update.message, "✅ Modo configurado y guardado: **Nuevo chat limpio**.")
 
 
@@ -503,6 +505,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text_prompt = (update.message.text or "").strip()
     caption_prompt = (update.message.caption or "").strip()
     prompt = text_prompt or caption_prompt
+    temp_files = []
 
     # Si el mensaje incluye foto
     if update.message.photo:
@@ -511,6 +514,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             file = await largest_photo.get_file()
             tmp_img = os.path.join(tempfile.gettempdir(), f"telegram_photo_{largest_photo.file_unique_id}.jpg")
             await file.download_to_drive(tmp_img)
+            temp_files.append(tmp_img)
 
             if prompt:
                 prompt = f"[Foto adjunta guardada en: {tmp_img}]\n\n{prompt}"
@@ -526,14 +530,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Mensajes > LONG_MESSAGE_THRESHOLD: esperar fragmentos y unirlos.
     # Todo pasa por chat_guard, que pregunta el chat si hubo inactividad.
     buffered = await long_message_buffer.handle(
-        update.message.chat_id, prompt, update.message, chat_guard_submit
+        update.message.chat_id, prompt, update.message, chat_guard_submit, temp_files=temp_files
     )
     if buffered:
         return
 
-    await chat_guard_submit(prompt, update.message)
+    await chat_guard_submit(prompt, update.message, temp_files=temp_files)
 
 
-async def chat_guard_submit(prompt: str, message_obj):
-    await chat_guard.handle(prompt, message_obj, execution_manager.submit)
+async def chat_guard_submit(prompt: str, message_obj, temp_files=None):
+    await chat_guard.handle(prompt, message_obj, execution_manager.submit, temp_files=temp_files)
 
