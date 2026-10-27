@@ -1,6 +1,7 @@
 import sys
-from telegram import Update
+from telegram import Update, BotCommand
 from telegram.ext import (
+    Application,
     ApplicationBuilder,
     ApplicationHandlerStop,
     ContextTypes,
@@ -48,9 +49,41 @@ async def auth_guard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         raise ApplicationHandlerStop
 
 
+async def post_init(application: Application) -> None:
+    """Sincroniza el menú de comandos de Telegram al iniciar el bot."""
+    commands = [
+        BotCommand("start", "Panel principal y ayuda"),
+        BotCommand("project", "Cambiar proyecto o repositorio (cwd)"),
+        BotCommand("resume", "Historial de chats y cambiar conversación"),
+        BotCommand("new", "Iniciar nuevo chat limpio"),
+        BotCommand("continue", "Continuar última conversación activa"),
+        BotCommand("current", "Ver proyecto, chat y modelo activos"),
+        BotCommand("model", "Cambiar o sincronizar modelo de IA"),
+        BotCommand("effort", "Ajustar nivel de razonamiento (low..max)"),
+        BotCommand("usage", "Ver capacidad y consumo de tokens"),
+        BotCommand("status", "Estado de AGY, RAM, disco y cola"),
+        BotCommand("queue", "Ver o gestionar cola de mensajes"),
+        BotCommand("cancel", "Cancelar ejecución actual"),
+        BotCommand("screen", "Captura de pantalla de la PC"),
+        BotCommand("delete", "Eliminar conversaciones guardadas"),
+        BotCommand("off", "Apagar servicio del bot"),
+    ]
+    try:
+        await application.bot.set_my_commands(commands)
+        logger.info("Menú de comandos de Telegram actualizado (%d comandos).", len(commands))
+    except Exception as e:
+        logger.warning("No se pudo actualizar el menú de comandos: %s", e)
+
+
 def main():
     print(f"Iniciando Bot de Telegram Modular AGY (Autorizado: {AUTHORIZED_USER_ID})...")
-    application = ApplicationBuilder().token(TOKEN).concurrent_updates(True).build()
+    application = (
+        ApplicationBuilder()
+        .token(TOKEN)
+        .concurrent_updates(True)
+        .post_init(post_init)
+        .build()
+    )
 
     application.add_error_handler(global_error_handler)
 
