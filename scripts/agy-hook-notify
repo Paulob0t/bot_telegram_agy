@@ -115,6 +115,11 @@ def send_telegram(text: str):
             pass
 
 def main():
+    # Si AGY fue invocado por el propio bot de Telegram, no enviar notificación duplicada
+    if os.environ.get("AGY_FROM_TELEGRAM") == "1":
+        print(json.dumps({}))
+        return
+
     try:
         raw_input = sys.stdin.read()
         if not raw_input.strip():
