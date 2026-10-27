@@ -58,26 +58,34 @@ def format_uptime(seconds: int) -> str:
 
 
 def get_git_branch(path: str) -> Optional[str]:
-    """Obtiene la rama de Git actual del directorio si es un repositorio Git."""
+    """Obtiene la rama de Git actual leyendo directamente .git/HEAD sin lanzar subprocesos."""
     if not path or not os.path.isdir(path):
         return None
     git_dir = os.path.join(path, ".git")
-    if not os.path.exists(git_dir):
-        return None
-    try:
-        res = subprocess.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=path,
-            capture_output=True,
-            text=True,
-            timeout=1.5,
-        )
-        if res.returncode == 0:
-            branch = res.stdout.strip()
-            if branch:
-                return branch
-    except Exception:
-        pass
+    head_file = os.path.join(git_dir, "HEAD")
+    if os.path.isfile(head_file):
+        try:
+            with open(head_file, "r", encoding="utf-8") as f:
+                ref = f.read().strip()
+            if ref.startswith("ref: refs/heads/"):
+                return ref[len("ref: refs/heads/"):]
+            if ref:
+                return ref[:7]
+        except Exception:
+            pass
+    elif os.path.exists(git_dir):
+        try:
+            res = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                cwd=path,
+                capture_output=True,
+                text=True,
+                timeout=1.0,
+            )
+            if res.returncode == 0 and res.stdout.strip():
+                return res.stdout.strip()
+        except Exception:
+            pass
     return None
 
 

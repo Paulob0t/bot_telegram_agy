@@ -107,37 +107,6 @@ def get_models_catalog() -> List[Dict[str, str]]:
     return DEFAULT_MODELS_CATALOG
 
 
-LOW_MODELS_CATALOG: List[Dict[str, str]] = [
-    {"id": "claude-opus-5-5-low", "name": "Claude Opus 5.5 (Low)", "icon": "👑"},
-    {"id": "claude-sonnet-5-5-low", "name": "Claude Sonnet 5.5 (Low)", "icon": "🎯"},
-    {"id": "gemini-4-argon-low", "name": "Gemini 4 Argon (Low)", "icon": "🧪"},
-    {"id": "gemini-3.8-flash-low", "name": "Gemini 3.8 Flash (Low)", "icon": "⚡"},
-]
-
-
-def get_low_models_catalog() -> List[Dict[str, str]]:
-    """
-    Retorna exclusivamente los modelos con perfil LOW (esfuerzo bajo / cuota reducida).
-    """
-    all_models = get_models_catalog()
-    low_models: List[Dict[str, str]] = []
-    seen = set()
-
-    # Priorizar modelos conocidos del catálogo LOW
-    for m in LOW_MODELS_CATALOG:
-        low_models.append(m)
-        seen.add(m["id"])
-
-    # Agregar cualquier otro modelo del catálogo que tenga sufijo -low y no esté ya
-    for item in all_models:
-        mid = item.get("id", "").lower()
-        if (mid.endswith("-low") or "-low-" in mid) and mid not in seen:
-            low_models.append(item)
-            seen.add(mid)
-
-    return low_models
-
-
 async def sync_models_from_cli(timeout: float = 15.0) -> List[Dict[str, str]]:
     """
     Ejecuta `agy models` de forma asíncrona, parsea la salida limpia de modelos
