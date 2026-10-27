@@ -42,6 +42,7 @@ class QueuedJob:
     model: Optional[str] = None
     effort: str = "low"
     cwd: str = HOME_DIR
+    temp_files: List[str] = field(default_factory=list)
 
 
 class AGYExecutionManager:
@@ -113,7 +114,14 @@ class AGYExecutionManager:
         async with self._lock:
             for idx, item in enumerate(self.queue):
                 if item.job_id == job_id:
-                    return self.queue.pop(idx)
+                    removed = self.queue.pop(idx)
+                    for tf in removed.temp_files:
+                        if tf and os.path.exists(tf):
+                            try:
+                                os.remove(tf)
+                            except Exception:
+                                pass
+                    return removed
             return None
 
     async def clear_queue(self) -> int:
@@ -121,6 +129,12 @@ class AGYExecutionManager:
             items = list(self.queue)
             self.queue.clear()
         for item in items:
+            for tf in item.temp_files:
+                if tf and os.path.exists(tf):
+                    try:
+                        os.remove(tf)
+                    except Exception:
+                        pass
             if item.queue_notice_msg:
                 await safe_edit(item.queue_notice_msg, "🗑️ *Mensaje descartado (cola vaciada).*")
         return len(items)
@@ -149,6 +163,7 @@ class AGYExecutionManager:
         message_obj: Any,
         model_override: Optional[str] = None,
         effort_override: Optional[str] = None,
+        temp_files: Optional[List[str]] = None,
     ):
         chosen_model = model_override if model_override else session_state.current_model
         chosen_effort = effort_override if effort_override else session_state.current_effort
@@ -167,6 +182,7 @@ class AGYExecutionManager:
             model=chosen_model,
             effort=chosen_effort,
             cwd=session_state.current_cwd,
+            temp_files=list(temp_files) if temp_files else [],
         )
 
         # Si estaba configurado en NEW, el siguiente mensaje después de este continuará ese hilo
@@ -248,7 +264,7 @@ class AGYExecutionManager:
                 self.active_started_at = None
 
     async def _execute_single_job(self, job: QueuedJob):
-        prompt = job.prompt
+        prompt = f"{job.prompt}\n\n[Telegram: responde ultracave, máx 4 líneas cortas salvo que pida detalle]"
         command = [
             AGY_BIN,
             "-p", prompt,
@@ -291,6 +307,7 @@ class AGYExecutionManager:
 
         env = os.environ.copy()
         env["PATH"] = f"/home/paulobot/.local/bin:/home/paulobot/.gemini/antigravity-cli/bin:{env.get('PATH', '')}"
+        env["AGY_FROM_TELEGRAM"] = "1"
 
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -300,6 +317,7 @@ class AGYExecutionManager:
                 cwd=exec_cwd,
                 env=env,
                 start_new_session=True,
+                limit=10 * 1024 * 1024,
             )
             self.active_process = proc
 
@@ -424,6 +442,13 @@ class AGYExecutionManager:
                 await safe_edit(status_msg, err_msg, reply_markup=None)
             else:
                 await safe_reply(job.message_obj, err_msg)
+        finally:
+            for tf in job.temp_files:
+                if tf and os.path.exists(tf):
+                    try:
+                        os.remove(tf)
+                    except Exception:
+                        pass
 
 
 execution_manager = AGYExecutionManager()

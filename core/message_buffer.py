@@ -20,6 +20,7 @@ class _PendingBuffer:
     parts: List[str] = field(default_factory=list)
     first_message: Any = None
     timer: Optional[asyncio.Task] = None
+    temp_files: List[str] = field(default_factory=list)
 
 
 class LongMessageBuffer:
@@ -41,7 +42,8 @@ class LongMessageBuffer:
         chat_id: int,
         text: str,
         message_obj: Any,
-        submit: Callable[[str, Any], Awaitable[None]],
+        submit: Callable[..., Awaitable[None]],
+        temp_files: Optional[List[str]] = None,
     ) -> bool:
         """
         Retorna True si el texto quedó en buffer (el caller no debe enviarlo).
@@ -63,12 +65,14 @@ class LongMessageBuffer:
                     pass
 
             buf.parts.append(text)
+            if temp_files:
+                buf.temp_files.extend(temp_files)
             if buf.timer and not buf.timer.done():
                 buf.timer.cancel()
             buf.timer = asyncio.create_task(self._flush_later(chat_id, submit))
             return True
 
-    async def _flush_later(self, chat_id: int, submit: Callable[[str, Any], Awaitable[None]]):
+    async def _flush_later(self, chat_id: int, submit: Callable[..., Awaitable[None]]):
         try:
             await asyncio.sleep(self.wait_seconds)
         except asyncio.CancelledError:
@@ -86,7 +90,10 @@ class LongMessageBuffer:
                 )
             except Exception:
                 pass
-        await submit(prompt, buf.first_message)
+        try:
+            await submit(prompt, buf.first_message, temp_files=buf.temp_files)
+        except TypeError:
+            await submit(prompt, buf.first_message)
 
 
 long_message_buffer = LongMessageBuffer()
