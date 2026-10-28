@@ -19,6 +19,7 @@ from core.projects import (
 )
 from core.models import (
     build_models_keyboard,
+    build_ai_quotas_dashboard,
     get_effective_model_display,
     get_models_catalog,
     sync_models_from_cli,
@@ -207,6 +208,12 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     # =========================================================
     # 🤖 CALLBACKS DE MODELO, ESFUERZO Y ENERGÍA
     # =========================================================
+    if data == "usage_sync":
+        await safe_edit(query.message, "🔄 *Sincronizando cuotas de IA (Claude Code & Antigravity)...*")
+        markup, text = await build_ai_quotas_dashboard()
+        await safe_edit(query.message, text, reply_markup=markup)
+        return
+
     if data == "mod_sync":
         await safe_edit(query.message, "🔄 *Consultando `agy models` para sincronizar el catálogo...*")
         try:

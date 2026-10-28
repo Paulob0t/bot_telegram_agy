@@ -15,6 +15,7 @@ from core.projects import (
 )
 from core.models import (
     build_models_keyboard,
+    build_ai_quotas_dashboard,
     get_effective_model_display,
     get_models_catalog,
     sync_models_from_cli,
@@ -126,60 +127,12 @@ async def cmd_usage(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
         return
 
-    model_disp, max_context = get_effective_model_display()
-
-    last_usage = session_state.last_usage_data
-    if not last_usage:
-        await safe_reply(
-            update.message,
-            "📊 **Consumo de Tokens & Contexto (AGY)**\n\n"
-            f"🤖 **Modelo activo:** {model_disp}\n"
-            f"🪟 **Límite de ventana:** `{max_context:,}` tokens\n\n"
-            "ℹ️ *Aún no se ha registrado actividad en esta sesión.*\n"
-            "Envía un mensaje o realiza una consulta y luego ejecuta `/usage` para ver las estadísticas exactas.",
-        )
-        return
-
-    input_tokens = last_usage.get("input_tokens", 0)
-    output_tokens = last_usage.get("output_tokens", 0)
-    thinking_tokens = last_usage.get("thinking_tokens", 0)
-    cache_read_tokens = last_usage.get("cache_read_tokens", 0)
-    total_tokens = last_usage.get("total_tokens", input_tokens + output_tokens + thinking_tokens)
-
-    active_context_tokens = input_tokens if input_tokens > 0 else total_tokens
-    percent_used = min(100.0, (active_context_tokens / max_context) * 100) if max_context > 0 else 0.0
-    percent_remaining = max(0.0, 100.0 - percent_used)
-    tokens_remaining = max(0, max_context - active_context_tokens)
-
-    blocks = 20
-    filled_remaining = int(round((percent_remaining / 100.0) * blocks))
-    filled_remaining = max(0, min(blocks, filled_remaining))
-    bar_remaining = "█" * filled_remaining + "░" * (blocks - filled_remaining)
-
-    if percent_remaining >= 60:
-        status_tag = "🟢 Capacidad óptima"
-    elif percent_remaining >= 25:
-        status_tag = "🟡 Capacidad moderada"
+    status_msg = await safe_reply(update.message, "🔄 *Sincronizando cuotas de IA (Claude Code & Antigravity)...*")
+    markup, text = await build_ai_quotas_dashboard()
+    if status_msg:
+        await safe_edit(status_msg, text, reply_markup=markup)
     else:
-        status_tag = "🔴 Capacidad baja (se recomienda `/new`)"
-
-    msg = (
-        "📊 **Estado de Capacidad & Tokens (AGY)**\n\n"
-        f"🔋 **Disponible:** `[{bar_remaining}]` **{percent_remaining:.2f}%**\n"
-        f"*{status_tag}*\n\n"
-        f"• 🔋 **Porcentaje Libre Restante:** `{percent_remaining:.2f}%` (`{tokens_remaining:,}` tokens)\n"
-        f"• 📈 **Porcentaje Usado:** `{percent_used:.2f}%` (`{active_context_tokens:,}` tokens)\n"
-        f"• 🪟 **Límite Total de Ventana:** `{max_context:,}` tokens\n\n"
-        "📝 **Detalle del Último Turno:**\n"
-        f"• 📥 *Entrada (Contexto):* `{input_tokens:,}`\n"
-        f"• 📤 *Salida generada:* `{output_tokens:,}`\n"
-        f"• 🧠 *Razonamiento (Thinking):* `{thinking_tokens:,}`\n"
-        f"• ⚡ *Caché leído:* `{cache_read_tokens:,}`\n\n"
-        f"🤖 **Modelo:** {model_disp}\n"
-        f"📍 **Chat actual:** `{session_state.current_conversation_title}`\n\n"
-        "💡 *Tip: Si el contexto se llena mucho, puedes usar `/new` para liberar el 100% de la ventana.*"
-    )
-    await safe_reply(update.message, msg)
+        await safe_reply(update.message, text, reply_markup=markup)
 
 
 async def cmd_resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
