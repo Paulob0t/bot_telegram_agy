@@ -1,7 +1,6 @@
-# ⚡ Telegram Bot para Antigravity CLI (AGY) & Control Remoto de Desarrollo
+# ⚡ Telegram Bot para Antigravity CLI (AGY) & Quickshell Ecosystem
 
-Asistente remoto de **Google Antigravity (`agy`)** y centro de control para servidor de desarrollo en Linux (Wayland / Hyprland) accesible desde Telegram.
-
+Asistente remoto de **Google Antigravity (`agy`)**, centro de control para desarrollo en Linux (Wayland / Hyprland / Omarchy) y ecosistema unificado de widgets **Quickshell** y hooks de notificación de **0 tokens**.
 
 ---
 
@@ -15,25 +14,26 @@ Asistente remoto de **Google Antigravity (`agy`)** y centro de control para serv
      - `🛑 Cancelar todo` (aborta el proceso activo y vacía la cola).
    - Lanza cada instancia de `agy` en su propio grupo de procesos (`start_new_session=True`) y termina todo el árbol de subprocesos (`os.killpg` con `SIGTERM` → `SIGKILL`) para evitar procesos hijos huérfanos (`node`, `git`, `bash`).
 
-2. **🗂️ Selector Dinámico de Proyecto / Workspace (`/project` o `/cd`):**
-   - Lista automáticamente todas las carpetas de proyectos en `/run/media/paulobot/Datos/Projects/*` ordenadas por modificación más reciente, mostrando la rama activa de Git (`🌿 branch`).
-   - Soporta búsqueda rápida por coincidencia parcial (`/cd wicode-b` activa `wicode-backend` al instante; `/cd wicode` muestra botones con las coincidencias).
+2. **🧩 Buffer de Mensajes Largos (`LongMessageBuffer`) y Guardia de Sesión (`ChatGuard`):**
+   - **Buffer automático (`> 400` caracteres):** Cuando pegas logs o bloques largos que Telegram divide en varios mensajes, el bot los agrupa en un buffer interactivo con botones (`🚀 Enviar todo`, `➕ Seguir pegando`, `🗑️ Descartar`) para enviarlos en un solo prompt.
+   - **Guardia de inactividad (`> 30 min`):** Si vuelves a escribir tras 30 minutos de inactividad, el bot retiene el mensaje y te permite elegir en qué conversación ejecutarlo (`💬 Seguir actual`, `🆕 Nuevo chat` o cualquiera de los últimos chats del proyecto).
 
-3. **💾 Persistencia Atómica de Sesión (`telegram_bot_state.json`):**
-   - Al reiniciar el servicio `systemd` o la laptop, restaura toda tu configuración sin perder contexto.
+3. **📸 Soporte Nativo de Imágenes y Capturas Wayland (`/screen`):**
+   - Envía fotos o capturas comprimidas/sin comprimir directamente al chat de Telegram; el bot las descarga en `/tmp/telegram-paulobot-media` e inyecta su ruta junto con tu instrucción para que AGY las inspeccione.
+   - `/screen` ejecuta `grim` sobre el display Wayland activo y envía una captura PNG del escritorio al chat.
 
-4. **🤖 Catálogo Dinámico de Modelos (`agy models`) y Cálculo Real de Contexto (`/usage`):**
-   - Sincroniza en vivo con `agy models` desde Telegram (`/model sync` o botón inline `🔄 Sincronizar lista con agy models`), incluyendo **Gemini 4 Argon**, **Gemini 3.8 Flash**, **Claude Opus 5.5**, **Claude Sonnet 5.5** y **GPT-OSS 120B**.
-   - Lee `~/.gemini/antigravity-cli/settings.json` para detectar el modelo por defecto real del CLI y calcula la barra de capacidad de tokens sobre la ventana real de cada familia (`1,048,576` tokens para Gemini, `200,000` para Claude y `128,000` para GPT-OSS).
+4. **📊 Panel de Cuotas Unificado (`/usage` & Quickshell `paulobot.ai-tokens`):**
+   - Comparte el mismo backend (`scripts/ai-token-stats`) entre el comando `/usage` de Telegram y el widget de la barra Quickshell.
+   - Consulta **bajo demanda (on-demand)** las cuotas de **Claude Code** (`claude --no-session-persistence -p /usage`, sin generar archivos `.jsonl` basura) y **Antigravity** (`agy -p /usage`: Gemini 5h/Semanal, Claude & GPT 5h/Semanal y Gemini 4 Argon Semanal).
 
-5. **✨ Streaming Rico sin Parpadeo de Markdown + Corte Inteligente (> 4000 chars):**
-   - **Sanitizador en tiempo real (`sanitize_streaming_markdown`):** Cierra temporalmente bloques de código abiertos (```` ``` ````), backticks inline (`` ` ``) o negritas (`**`) antes de cada edición en Telegram para evitar fallos de `parse_mode="Markdown"`.
-   - **Inspector de herramientas en vivo (`format_step_tool_activity`):** Muestra en tiempo real qué comando está corriendo (`run_command`), qué archivo está leyendo/editando (`view_file`, `edit_file`, `create_file`) o qué está buscando AGY.
-   - **División inteligente (`split_markdown_chunks`):** Cuando la respuesta final supera los 4000 caracteres, divide por párrafos (`\n\n`) o saltos de línea (`\n`), cerrando el bloque ```` ```lenguaje ```` al final de un mensaje y reabriéndolo automáticamente con el mismo lenguaje al inicio del siguiente.
+5. **🔔 Hooks de Notificación `Stop` con 0 Consumo de Tokens (`agy-hook-notify` & `claude-hook-notify`):**
+   - Al terminar cualquier tarea en terminal con **Antigravity (`agy`)** o **Claude Code (`claude`)**, los hooks leen directamente el transcript `.jsonl` local sin invocar al LLM (0 tokens):
+     - **Omarchy Desktop:** Muestra únicamente un aviso minimalista `✓ Tarea lista · <Proyecto>`.
+     - **Telegram:** Envía el desglose completo de la respuesta final del modelo directo a tu celular.
 
-   - `/screen` ejecuta `grim` sobre el display Wayland activo y envía una captura PNG del escritorio de la laptop al chat de Telegram.
-     - `🔔 Siempre Activo (off)`: Reenvía todas las notificaciones del sistema al celular.
-     - `🔕 No Molestar (on)`: Silencia todas las notificaciones de escritorio.
+6. **🗂️ Selector Dinámico de Proyecto (`/project` o `/cd`) y Catálogo de Modelos (`/model`):**
+   - Lista automáticamente los repositorios en `/run/media/paulobot/Datos/Projects/*` ordenados por modificación reciente y muestra su rama activa de Git (`🌿 branch`).
+   - Sincroniza en vivo con `agy models` (`/model sync`) y persiste toda la sesión de forma atómica en `~/.gemini/antigravity-cli/telegram_bot_state.json`.
 
 ---
 
@@ -44,36 +44,39 @@ telegram-paulobot/
 ├── bot.py                          # Entrypoint principal: inicializa Application y registra handlers
 ├── requirements.txt                # Dependencias de Python
 ├── .env.example                    # Plantilla de variables de entorno (sin secretos)
-├── .gitignore                      # Protección de .env, caché y logs
 ├── core/
 │   ├── __init__.py
-│   ├── config.py                   # Carga segura de .env (chmod 600), rutas y logging
+│   ├── config.py                   # Carga segura de .env (chmod 600), rutas y constantes
 │   ├── state.py                    # BotSessionState con persistencia atómica en JSON
-│   ├── utils.py                    # Sanitizador Markdown, splitter de chunks y formateador de herramientas
+│   ├── utils.py                    # Sanitizador Markdown, splitter de chunks, modo ultracave y formateador de tools
+│   ├── buffer.py                   # LongMessageBuffer (>400 chars) y ChatGuard (selector tras 30 min inactivo)
 │   ├── executor.py                 # AGYExecutionManager: cola FIFO, streaming JSON y control de grupos de procesos (PGID)
 │   ├── projects.py                 # Descubrimiento de proyectos, paginación y resolución difusa para /cd
-│   ├── models.py                   # Catálogo dinámico sincronizado con `agy models` y ventanas de contexto
+│   ├── models.py                   # Catálogo dinámico (`agy models`) y dashboard de cuotas (`ai-token-stats`)
 │   ├── chats_db.py                 # Historial paginado y eliminación de conversaciones en SQLite
 │   └── handlers/
 │       ├── __init__.py
-│       └── callbacks.py            # Enrutador modular de CallbackQuery (botones inline)
+│       ├── commands.py             # Comandos (/start, /project, /model, /usage, /resume, /screen, etc.)
+│       ├── callbacks.py            # Enrutador modular de CallbackQuery (botones inline)
+│       └── messages.py             # Handler de texto, fotos, documentos de imagen, buffer y ChatGuard
+├── quickshell/
+│   ├── paulobot.ai-tokens/         # Widget Quickshell de cuotas AI (consulta on-demand al abrir o refrescar)
+│   └── paulobot.telegram-bot/      # Widget Quickshell de estado y encendido/apagado de telegram-bot.service
 ├── scripts/
-│   ├── agy-hook-notify             # Hook de finalización de tareas de AGY
-│   └── notify-telegram             # Utilidad CLI para enviar alertas desde terminal o pipes
+│   ├── ai-token-stats              # Backend unificado de cuotas (Claude Code + Antigravity, 0 sesiones basura)
+│   ├── agy-hook-notify             # Hook Stop de AGY (0 tokens: check en Omarchy + desglose en Telegram)
+│   ├── claude-hook-notify          # Hook Stop de Claude Code (0 tokens: check en Omarchy + desglose en Telegram)
+│   ├── notify-telegram             # Utilidad CLI para enviar alertas manuales desde terminal o pipes
+│   └── telegram-bot-service        # Wrapper CLI de systemctl --user para controlar telegram-bot.service
 └── systemd/
-    ├── telegram-bot.service            # Unidad systemd de usuario para el bot principal
-    └── telegram-notify-bridge.service  # Unidad systemd de usuario para el puente DBus
+    └── telegram-bot.service        # Unidad systemd de usuario para el bot principal
 ```
 
 ---
 
 ## 🚀 Instalación y Configuración
 
-### 1. Requisitos del Sistema
-- **Python 3.10+** y `python-telegram-bot`
-- **Google Antigravity CLI (`agy`)** instalado en `~/.local/bin/agy`
-
-### 2. Configurar Variables de Entorno (`.env`)
+### 1. Variables de Entorno (`.env`)
 Copia la plantilla `.env.example` a `.env` y restringe sus permisos a `600`:
 
 ```bash
@@ -88,20 +91,25 @@ TELEGRAM_AUTHORIZED_USER_ID=tu_user_id_numerico_aqui
 TELEGRAM_CHAT_ID=tu_chat_id_numerico_aqui
 ```
 
-### 3. Instalar Dependencias
+### 2. Symlinks Unificados (Scripts y Quickshell)
+Todos los scripts y widgets viven dentro de este repositorio y se enlazan a `~/.local/bin` y `~/.config/omarchy/plugins`:
+
 ```bash
-pip install -r requirements.txt
+ln -sf "$PWD/scripts/ai-token-stats" ~/.local/bin/ai-token-stats
+ln -sf "$PWD/scripts/agy-hook-notify" ~/.local/bin/agy-hook-notify
+ln -sf "$PWD/scripts/claude-hook-notify" ~/.local/bin/claude-hook-notify
+ln -sf "$PWD/scripts/telegram-bot-service" ~/.local/bin/telegram-bot-service
+
+ln -sfn "$PWD/quickshell/paulobot.ai-tokens" ~/.config/omarchy/plugins/paulobot.ai-tokens
+ln -sfn "$PWD/quickshell/paulobot.telegram-bot" ~/.config/omarchy/plugins/paulobot.telegram-bot
 ```
 
-### 4. Ejecución con `systemd` (Modo Usuario)
-Copia las unidades a `~/.config/systemd/user/` y habilítalas:
-
+### 3. Servicio `systemd`
 ```bash
 mkdir -p ~/.config/systemd/user
-cp systemd/*.service ~/.config/systemd/user/
+cp systemd/telegram-bot.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now telegram-bot.service
-systemctl --user enable --now telegram-notify-bridge.service
 ```
 
 ---
@@ -111,13 +119,13 @@ systemctl --user enable --now telegram-notify-bridge.service
 | Comando | Alias | Descripción |
 | :--- | :--- | :--- |
 | `/start` | `/help`, `/ayuda` | Muestra el panel general de ayuda y el estado actual |
-| `/project` | `/cd`, `/workspace`, `/repo` | Abre el selector de proyectos o cambia rápido (`/cd wicode-b`) |
+| `/project` | `/cd`, `/workspace`, `/repo` | Abre el selector de proyectos o cambia rápido (`/cd stover`) |
 | `/screen` | `/ss`, `/captura` | Toma una captura de pantalla del escritorio Wayland (`grim`) y la envía al chat |
 | `/queue` | `/cola` | Muestra la tarea en ejecución y la cola de mensajes en espera |
 | `/cancel` | `/stop`, `/cancelar` | Cancela el árbol de procesos de la tarea activa de AGY |
 | `/model` | `/modelo` | Cambia el modelo de IA o sincroniza el catálogo con `agy models` (`/model sync`) |
 | `/effort` | `/esfuerzo`, `/speed` | Ajusta el nivel de razonamiento (`low`, `medium`, `high`, `xhigh`, `max`) |
-| `/usage` | `/tokens`, `/consumo` | Muestra barra de capacidad libre y consumo de tokens del último turno |
+| `/usage` | `/tokens`, `/consumo` | Muestra el panel de cuotas en vivo de Claude Code y Antigravity (Quickshell Sync) |
 | `/resume` | `/chats`, `/historial` | Historial paginado de conversaciones de AGY guardadas en SQLite |
 | `/delete` | `/borrar`, `/eliminar` | Menú para eliminar conversaciones antiguas de SQLite y del disco |
 | `/continue` | `/continuar` | Configura el envío en modo `-c` (continuar última conversación activa) |
