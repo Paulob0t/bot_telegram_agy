@@ -1,0 +1,164 @@
+#!/usr/bin/env python3
+"""
+Unified AI Quotas fetcher for Telegram Bot (/usage) and Quickshell (paulobot.ai-tokens).
+Uses `--no-session-persistence` so Claude Code creates zero `.jsonl` files.
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+CACHE_FILE = Path.home() / ".gemini" / "antigravity-cli" / "ai_quotas_cache.json"
+
+
+def get_claude_quota() -> dict:
+    try:
+        res = subprocess.run(
+            ["claude", "--no-session-persistence", "-p", "/usage"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            cwd="/tmp",
+        )
+        lines = res.stdout.strip().split("\n")
+
+        session_used_pct = 0
+        session_resets = ""
+        week_used_pct = 0
+        week_resets = ""
+
+        for line in lines:
+            line = line.strip()
+            if "Current session:" in line:
+                m = re.search(r"Current session:\s*(\d+)%\s*used(?:\s*·\s*resets\s*(.*))?", line)
+                if m:
+                    session_used_pct = int(m.group(1))
+                    session_resets = (m.group(2) or "").strip()
+            elif "Current week" in line:
+                m = re.search(r"Current week[^:]*:\s*(\d+)%\s*used(?:\s*·\s*resets\s*(.*))?", line)
+                if m:
+                    week_used_pct = int(m.group(1))
+                    week_resets = (m.group(2) or "").strip()
+
+        return {
+            "available": True,
+            "session_used_pct": session_used_pct,
+            "session_remaining_pct": max(0, 100 - session_used_pct),
+            "session_resets": session_resets,
+            "week_used_pct": week_used_pct,
+            "week_remaining_pct": max(0, 100 - week_used_pct),
+            "week_resets": week_resets,
+        }
+    except Exception as e:
+        return {"available": False, "error": str(e)}
+
+
+def get_antigravity_quota() -> dict:
+    try:
+        res = subprocess.run(
+            ["agy", "-p", "/usage"],
+            capture_output=True,
+            text=True,
+            timeout=12,
+            cwd="/tmp",
+        )
+        lines = res.stdout.strip().split("\n")
+
+        gemini_5h_pct = 100.0
+        gemini_5h_reset = ""
+        gemini_week_pct = 100.0
+        gemini_week_reset = ""
+
+        claude_gpt_5h_pct = 100.0
+        claude_gpt_5h_reset = ""
+        claude_gpt_week_pct = 100.0
+        claude_gpt_week_reset = ""
+
+        argon_week_pct = 0.0
+        argon_week_reset = ""
+
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith("Quota:"):
+                continue
+
+            m = re.search(r"(\d+(?:\.\d+)?)%\s+(.*)$", line)
+            pct = float(m.group(1)) if m else 0.0
+            reset = m.group(2).strip() if m else ""
+
+            if "Gemini Models" in line:
+                if "Five Hour Limit" in line:
+                    gemini_5h_pct = pct
+                    gemini_5h_reset = reset
+                elif "Weekly Limit" in line:
+                    gemini_week_pct = pct
+                    gemini_week_reset = reset
+            elif "Claude and GPT" in line:
+                if "Five Hour Limit" in line:
+                    claude_gpt_5h_pct = pct
+                    claude_gpt_5h_reset = reset
+                elif "Weekly Limit" in line:
+                    claude_gpt_week_pct = pct
+                    claude_gpt_week_reset = reset
+            elif "Gemini 4 Argon" in line:
+                argon_week_pct = pct
+                argon_week_reset = reset
+
+        return {
+            "available": True,
+            "gemini": {
+                "five_hour_remaining_pct": gemini_5h_pct,
+                "five_hour_used_pct": round(100.0 - gemini_5h_pct, 2),
+                "five_hour_reset": gemini_5h_reset,
+                "week_remaining_pct": gemini_week_pct,
+                "week_used_pct": round(100.0 - gemini_week_pct, 2),
+                "week_reset": gemini_week_reset,
+            },
+            "claude_gpt": {
+                "five_hour_remaining_pct": claude_gpt_5h_pct,
+                "five_hour_used_pct": round(100.0 - claude_gpt_5h_pct, 2),
+                "five_hour_reset": claude_gpt_5h_reset,
+                "week_remaining_pct": claude_gpt_week_pct,
+                "week_used_pct": round(100.0 - claude_gpt_week_pct, 2),
+                "week_reset": claude_gpt_week_reset,
+            },
+            "argon": {
+                "week_remaining_pct": argon_week_pct,
+                "week_used_pct": round(100.0 - argon_week_pct, 2),
+                "week_reset": argon_week_reset,
+            },
+        }
+    except Exception as e:
+        return {"available": False, "error": str(e)}
+
+
+def main():
+    if "--cached" in sys.argv and CACHE_FILE.exists():
+        try:
+            print(CACHE_FILE.read_text(encoding="utf-8"))
+            return
+        except Exception:
+            pass
+
+    claude_data = get_claude_quota()
+    ag_data = get_antigravity_quota()
+
+    result = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "claude_code": claude_data,
+        "antigravity": ag_data,
+    }
+    payload = json.dumps(result)
+    try:
+        CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        CACHE_FILE.write_text(payload, encoding="utf-8")
+    except Exception:
+        pass
+    print(payload)
+
+
+if __name__ == "__main__":
+    main()

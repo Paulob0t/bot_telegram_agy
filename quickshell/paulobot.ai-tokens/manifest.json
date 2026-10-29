@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "paulobot.ai-tokens",
+  "name": "AI Token Monitor",
+  "version": "1.0.0",
+  "author": "paulobot",
+  "description": "Real-time token usage monitor for Claude Code and Antigravity (5h refresh and 7d weekly stats)",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "AI Token Monitor",
+    "description": "Real-time AI tokens tracker (Claude & Antigravity)",
+    "category": "Utilities",
+    "allowMultiple": false
+  }
+}

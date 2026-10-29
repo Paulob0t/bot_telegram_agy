@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "paulobot.telegram-bot",
+  "name": "Telegram Bot",
+  "version": "1.0.0",
+  "author": "paulobot",
+  "description": "Control and switch for Telegram Agbot",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Telegram Bot",
+    "description": "Telegram Bot status and toggle switch",
+    "category": "Utilities",
+    "allowMultiple": false
+  }
+}

@@ -1,0 +1,40 @@
+#!/bin/bash
+
+SERVICE="telegram-bot.service"
+
+is_running() {
+  systemctl --user is-active --quiet "$SERVICE"
+}
+
+case "${1:-status}" in
+  start)
+    systemctl --user start "$SERVICE"
+    echo "started"
+    ;;
+  stop)
+    systemctl --user stop "$SERVICE"
+    echo "stopped"
+    ;;
+  toggle)
+    if is_running; then
+      systemctl --user stop "$SERVICE"
+      echo "stopped"
+    else
+      systemctl --user start "$SERVICE"
+      echo "started"
+    fi
+    ;;
+  status)
+    if is_running; then
+      echo "running"
+      exit 0
+    else
+      echo "stopped"
+      exit 1
+    fi
+    ;;
+  *)
+    echo "Usage: $0 {start|stop|toggle|status}"
+    exit 1
+    ;;
+esac
