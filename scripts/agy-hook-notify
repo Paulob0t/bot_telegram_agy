@@ -1,11 +1,22 @@
 #!/usr/bin/env python3
-import sys
+"""
+Hook Stop para Antigravity (AGY): envía notificación a Telegram y escritorio (Omarchy)
+con 0 consumo de tokens (lee directamente el transcript .jsonl local).
+En Telegram envía el desglose exacto que respondió AGY (limpiando links file://).
+"""
 import json
 import os
 import re
-import urllib.request
+import shutil
+import subprocess
+import sys
 import urllib.parse
-import sqlite3
+import urllib.request
+
+TITLE_MAX = 50
+DESKTOP_SUMMARY_MAX = 90
+TELEGRAM_BODY_MAX = 3500
+
 
 def _load_env():
     for p in (
@@ -23,12 +34,50 @@ def _load_env():
             except Exception:
                 pass
 
+
 _load_env()
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", os.environ.get("TELEGRAM_AUTHORIZED_USER_ID", "")).strip()
-DB_PATH = os.path.expanduser("~/.gemini/antigravity-cli/conversation_summaries.db")
 
-def extract_task_and_summary(transcript_path):
+
+def _clip(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    cut = text[:limit].rsplit(" ", 1)[0]
+    return cut.rstrip(" ,;:.") + "…"
+
+
+def shorten_title(user_task: str) -> str:
+    user_task = re.sub(r"<[^>]+>", "", user_task or "").strip()
+    first = user_task.split("\n")[0].strip() if user_task else ""
+    return _clip(first, TITLE_MAX)
+
+
+def format_full_response(response: str) -> str:
+    """Devuelve el desglose exacto del modelo, convirtiendo links file:// a código legible."""
+    if not response:
+        return ""
+    text = response.strip()
+    # Convierte [archivo.py](file:///ruta/...) -> `archivo.py`
+    text = re.sub(r"\[`?([^\]`]+)`?\]\(file://[^\)]+\)", r"`\1`", text)
+    text = re.sub(r"\[([^\]]+)\]\(conversation://[^\)]+\)", r"`\1`", text)
+    return _clip(text, TELEGRAM_BODY_MAX)
+
+
+def shorten_desktop_summary(response: str) -> str:
+    desc = response or ""
+    desc = re.sub(r"```.*?```", "", desc, flags=re.DOTALL)
+    desc = re.sub(r"`([^`]+)`", r"\1", desc)
+    desc = re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", desc)
+    desc = re.sub(r"[#*>_|]", "", desc)
+    lines = [l.strip(" -•\t") for l in desc.splitlines()]
+    lines = [l for l in lines if len(l) > 2 and set(l) - set("-=")]
+    first = lines[0] if lines else ""
+    first = re.split(r"(?<=[.!?])\s", first, maxsplit=1)[0]
+    return _clip(" ".join(first.split()), DESKTOP_SUMMARY_MAX)
+
+
+def extract_agy_transcript(transcript_path: str):
     user_task = ""
     last_response = ""
     if not transcript_path or not os.path.exists(transcript_path):
@@ -45,61 +94,40 @@ def extract_task_and_summary(transcript_path):
                     if t == "USER_INPUT":
                         content = data.get("content", "")
                         m = re.search(r"<USER_REQUEST>(.*?)</USER_REQUEST>", content, re.DOTALL)
-                        if m:
-                            user_task = m.group(1).strip()
-                        else:
-                            user_task = content.strip()
+                        user_task = m.group(1).strip() if m else content.strip()
                     elif t == "PLANNER_RESPONSE":
                         content = data.get("content")
-                        if content:
+                        if content and content.strip():
                             last_response = content.strip()
                 except Exception:
                     pass
     except Exception:
         pass
 
-    return shorten_title(user_task), shorten_summary(last_response)
+    return shorten_title(user_task), last_response
 
 
-TITLE_MAX = 45
-SUMMARY_MAX = 80
+def send_desktop(title: str, desc: str):
+    if shutil.which("omarchy-notification-send"):
+        cmd = ["omarchy-notification-send", "--app-name", "Antigravity", "-g", "✓", "-u", "normal", "-t", "6000", title]
+        if desc:
+            cmd.append(desc)
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    elif shutil.which("notify-send"):
+        cmd = ["notify-send", "-a", "Antigravity", "-u", "normal", f"✓ {title}"]
+        if desc:
+            cmd.append(desc)
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-
-def _clip(text, limit):
-    if len(text) <= limit:
-        return text
-    cut = text[:limit].rsplit(" ", 1)[0]
-    return cut.rstrip(" ,;:.") + "…"
-
-
-def shorten_title(user_task):
-    """Primera línea del pedido, sin etiquetas, recortada a TITLE_MAX."""
-    user_task = re.sub(r"<[^>]+>", "", user_task or "").strip()
-    first = user_task.split("\n")[0].strip() if user_task else ""
-    return _clip(first, TITLE_MAX)
-
-
-def shorten_summary(response):
-    """Solo la primera oración de la respuesta final, sin markdown, recortada a SUMMARY_MAX."""
-    desc = response or ""
-    desc = re.sub(r"```.*?```", "", desc, flags=re.DOTALL)
-    desc = re.sub(r"`([^`]+)`", r"\1", desc)
-    desc = re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", desc)
-    desc = re.sub(r"[#*>_|]", "", desc)
-    # Primera línea con contenido real (ignora separadores y viñetas vacías)
-    lines = [l.strip(" -•\t") for l in desc.splitlines()]
-    lines = [l for l in lines if len(l) > 2 and set(l) - set("-=")]
-    first = lines[0] if lines else ""
-    # Primera oración de esa línea
-    first = re.split(r"(?<=[.!?])\s", first, maxsplit=1)[0]
-    return _clip(" ".join(first.split()), SUMMARY_MAX)
 
 def send_telegram(text: str):
+    if not TOKEN or not CHAT_ID:
+        return
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
     payload = {
         "chat_id": CHAT_ID,
         "text": text[:4000],
-        "parse_mode": "Markdown"
+        "parse_mode": "Markdown",
     }
     try:
         data = urllib.parse.urlencode(payload).encode("utf-8")
@@ -114,12 +142,8 @@ def send_telegram(text: str):
         except Exception:
             pass
 
-def main():
-    # Si AGY fue invocado por el propio bot de Telegram, no enviar notificación duplicada
-    if os.environ.get("AGY_FROM_TELEGRAM") == "1":
-        print(json.dumps({}))
-        return
 
+def main():
     try:
         raw_input = sys.stdin.read()
         if not raw_input.strip():
@@ -127,32 +151,37 @@ def main():
             return
 
         payload = json.loads(raw_input)
-        conv_id = payload.get("conversationId", "")
         error = payload.get("error", "")
         workspaces = payload.get("workspacePaths", [])
         transcript_path = payload.get("transcriptPath", "")
 
-        ws_name = os.path.basename(workspaces[0]) if workspaces else "Workspace"
-        task_title, task_desc = extract_task_and_summary(transcript_path)
-
+        ws_name = os.path.basename(workspaces[0].rstrip("/")) if workspaces else "Workspace"
+        task_title, raw_response = extract_agy_transcript(transcript_path)
         if not task_title:
             task_title = "Tarea finalizada"
 
-        # Formato compacto: 2-3 líneas cortas
-        icon = "⚠️" if error else "✓"
-        msg_lines = [f"{icon} *{task_title}* · `{ws_name}`"]
-        if task_desc:
-            msg_lines.append(task_desc)
-        if error:
-            msg_lines.append(f"`{_clip(str(error), 60)}`")
+        desktop_desc = shorten_desktop_summary(raw_response)
+        full_body = format_full_response(raw_response)
 
-        send_telegram("\n".join(msg_lines))
+        # 1. Notificación de escritorio (0 tokens, siempre se muestra en Omarchy)
+        send_desktop(task_title, desktop_desc)
+
+        # 2. Notificación de Telegram (solo cuando trabajas en terminal/IDE; si ya estás en el bot, el bot envía la respuesta)
+        if os.environ.get("AGY_FROM_TELEGRAM") != "1":
+            icon = "⚠️" if error else "✓"
+            msg_lines = [f"{icon} *[AGY] {task_title}* · `{ws_name}`"]
+            if full_body:
+                msg_lines.append("")
+                msg_lines.append(full_body)
+            if error:
+                msg_lines.append(f"\n`{_clip(str(error), 120)}`")
+            send_telegram("\n".join(msg_lines))
 
     except Exception:
         pass
 
-    # Responder al contrato del hook de Stop
     print(json.dumps({}))
+
 
 if __name__ == "__main__":
     main()

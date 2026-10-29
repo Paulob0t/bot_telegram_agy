@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
 """
-Hook Stop para Claude Code: envía notificación ultracave a Telegram y escritorio
-con 0 consumo de tokens (lee directamente el transcript .jsonl).
+Hook Stop para Claude Code: envía notificación a Telegram y escritorio (Omarchy)
+con 0 consumo de tokens (lee directamente el transcript .jsonl local).
+En Telegram envía el desglose exacto que respondió Claude.
 """
-import sys
 import json
 import os
 import re
 import shutil
 import subprocess
-import urllib.request
+import sys
 import urllib.parse
+import urllib.request
 
-TITLE_MAX = 45
-SUMMARY_MAX = 80
+TITLE_MAX = 50
+DESKTOP_SUMMARY_MAX = 90
+TELEGRAM_BODY_MAX = 3500
 
 
 def _load_env():
@@ -51,7 +53,16 @@ def shorten_title(user_task: str) -> str:
     return _clip(first, TITLE_MAX)
 
 
-def shorten_summary(response: str) -> str:
+def format_full_response(response: str) -> str:
+    """Devuelve el desglose exacto del modelo, convirtiendo links file:// a código legible."""
+    if not response:
+        return ""
+    text = response.strip()
+    text = re.sub(r"\[`?([^\]`]+)`?\]\(file://[^\)]+\)", r"`\1`", text)
+    return _clip(text, TELEGRAM_BODY_MAX)
+
+
+def shorten_desktop_summary(response: str) -> str:
     desc = response or ""
     desc = re.sub(r"```.*?```", "", desc, flags=re.DOTALL)
     desc = re.sub(r"`([^`]+)`", r"\1", desc)
@@ -61,7 +72,7 @@ def shorten_summary(response: str) -> str:
     lines = [l for l in lines if len(l) > 2 and set(l) - set("-=")]
     first = lines[0] if lines else ""
     first = re.split(r"(?<=[.!?])\s", first, maxsplit=1)[0]
-    return _clip(" ".join(first.split()), SUMMARY_MAX)
+    return _clip(" ".join(first.split()), DESKTOP_SUMMARY_MAX)
 
 
 def extract_claude_transcript(transcript_path: str):
@@ -102,7 +113,7 @@ def extract_claude_transcript(transcript_path: str):
     except Exception:
         pass
 
-    return shorten_title(user_task), shorten_summary(last_response)
+    return shorten_title(user_task), last_response
 
 
 def send_telegram(text: str):
@@ -152,17 +163,21 @@ def main():
         cwd = payload.get("cwd") or os.getcwd()
         ws_name = os.path.basename(cwd.rstrip("/")) or "Stover"
 
-        task_title, task_desc = extract_claude_transcript(transcript_path)
+        task_title, raw_response = extract_claude_transcript(transcript_path)
         if not task_title:
             task_title = "Tarea Claude lista"
 
-        # 1. Notificación de escritorio (Omarchy)
-        send_desktop(task_title, task_desc)
+        desktop_desc = shorten_desktop_summary(raw_response)
+        full_body = format_full_response(raw_response)
 
-        # 2. Notificación de Telegram (mismo estilo ultracave compacto)
+        # 1. Notificación de escritorio (Omarchy)
+        send_desktop(task_title, desktop_desc)
+
+        # 2. Notificación de Telegram con el desglose completo (0 tokens)
         msg_lines = [f"✓ *[Claude] {task_title}* · `{ws_name}`"]
-        if task_desc:
-            msg_lines.append(task_desc)
+        if full_body:
+            msg_lines.append("")
+            msg_lines.append(full_body)
         send_telegram("\n".join(msg_lines))
     except Exception:
         pass
