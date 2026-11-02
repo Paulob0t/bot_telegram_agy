@@ -25,8 +25,14 @@ from core.desktop_tools import (
     capture_wayland_screenshot,
     build_screenshot_keyboard,
 )
+from core.claude_chats import (
+    build_claude_projects_keyboard,
+    build_claude_sessions_keyboard,
+    build_claude_delete_keyboard,
+    list_claude_projects,
+    get_claude_slug_for_cwd,
+)
 from core.executor import execution_manager
-from core.message_buffer import long_message_buffer
 from core.chat_guard import chat_guard
 
 
@@ -46,9 +52,11 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• ⚡ `/cd <nombre>` - Cambiar directo (ej. `/cd wicode-back`, `/cd ~`)\n\n"
         "🖥️ **Control Remoto de PC & Escritorio:**\n"
         "• 📸 `/screen` o `/ss` - Captura de pantalla en vivo de tu laptop (Wayland)\n\n"
-        "🛠️ **Comandos de AGY:**\n"
+        "🛠️ **Comandos de AGY & Claude:**\n"
+        "• 🟠 `/claude` - Proyectos y sesiones de Claude Code (ej. Stover)\n"
+        "• 🔵 `/agy` - Volver a motor Antigravity (AGY)\n"
         "• 📊 `/usage` o `/tokens` - Ver capacidad y consumo de tokens\n"
-        "• 📂 `/resume` o `/chats` - Historial paginado de chats\n"
+        "• 📂 `/resume` o `/chats` - Historial paginado de chats AGY\n"
         "• 🗑️ `/delete` o `/borrar` - Eliminar chats individuales\n"
         "• 🤖 `/model` - Cambiar o sincronizar modelos de IA (`agy models`)\n"
         "• ⚡ `/effort` - Ajustar velocidad/razonamiento (`low`..`max`)\n"
@@ -87,10 +95,23 @@ async def cmd_project(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if target_path:
         session_state.set_cwd(target_path)
         summary = format_active_cwd_summary()
+        slug = get_claude_slug_for_cwd(target_path)
+        keyboard = []
+        if slug:
+            projects_cl = list_claude_projects()
+            cl_idx = next((i for i, p in enumerate(projects_cl) if p["slug"] == slug), None)
+            if cl_idx is not None:
+                keyboard.append([
+                    InlineKeyboardButton(
+                        f"🟠 Ver chats de Claude en {os.path.basename(target_path)}",
+                        callback_data=f"cl_proj:{cl_idx}:0",
+                    )
+                ])
         await safe_reply(
             update.message,
             f"✅ **Directorio de trabajo (`cwd`) actualizado:**\n\n{summary}\n\n"
-            f"🚀 *Los próximos comandos de AGY se ejecutarán directamente dentro de este proyecto.*",
+            f"🚀 *Los próximos comandos se ejecutarán directamente dentro de este proyecto.*",
+            reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None,
         )
         return
 
@@ -138,6 +159,16 @@ async def cmd_usage(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
         return
+    if session_state.current_engine == "claude":
+        slug = get_claude_slug_for_cwd(session_state.current_cwd)
+        projects_cl = list_claude_projects()
+        cl_idx = next((i for i, p in enumerate(projects_cl) if p["slug"] == slug), None) if slug else None
+        if cl_idx is not None:
+            markup, text = build_claude_sessions_keyboard(cl_idx, page=0)
+        else:
+            markup, text = build_claude_projects_keyboard()
+        await safe_reply(update.message, text, reply_markup=markup)
+        return
     markup, text = build_resume_keyboard(page=0)
     if not markup:
         await safe_reply(update.message, text)
@@ -145,8 +176,43 @@ async def cmd_resume(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await safe_reply(update.message, text, reply_markup=markup)
 
 
+async def cmd_claude(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Abre el menú exclusivo de proyectos y sesiones de Claude Code."""
+    if not is_authorized(update):
+        return
+    slug = get_claude_slug_for_cwd(session_state.current_cwd)
+    projects_cl = list_claude_projects()
+    cl_idx = next((i for i, p in enumerate(projects_cl) if p["slug"] == slug), None) if slug else None
+    if cl_idx is not None and len(projects_cl) == 1:
+        markup, text = build_claude_sessions_keyboard(cl_idx, page=0)
+    else:
+        markup, text = build_claude_projects_keyboard()
+    await safe_reply(update.message, text, reply_markup=markup)
+
+
+async def cmd_agy(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Regresa el motor activo a Antigravity (AGY)."""
+    if not is_authorized(update):
+        return
+    session_state.set_engine("agy")
+    chat_guard.touch()
+    await safe_reply(
+        update.message,
+        f"🔵 **Motor activo cambiado a Antigravity (AGY).**\n"
+        f"• 💬 **Chat AGY:** `{session_state.current_conversation_title}`\n"
+        f"• 📂 **Proyecto (`cwd`):** `{session_state.get_cwd_short_name()}`",
+    )
+
+
 async def cmd_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
+        return
+    if session_state.current_engine == "claude":
+        slug = get_claude_slug_for_cwd(session_state.current_cwd)
+        projects_cl = list_claude_projects()
+        cl_idx = next((i for i, p in enumerate(projects_cl) if p["slug"] == slug), 0) if slug else 0
+        markup, text = build_claude_delete_keyboard(proj_idx=cl_idx, page=0)
+        await safe_reply(update.message, text, reply_markup=markup)
         return
     markup, text = build_delete_keyboard(page=0)
     if not markup:
@@ -260,6 +326,11 @@ async def cmd_effort(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_continue(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
         return
+    if session_state.current_engine == "claude":
+        session_state.set_claude_session(None, "🔄 Último chat de Claude (-c)", cwd=session_state.current_cwd)
+        chat_guard.touch()
+        await safe_reply(update.message, "🟠 Modo configurado: **Continuar última conversación de Claude (`-c`)**.")
+        return
     session_state.set_conversation(None, "🔄 Continuar último chat activo (-c)")
     chat_guard.touch()
     await safe_reply(update.message, "✅ Modo configurado y guardado: **Continuar última conversación activa**.")
@@ -267,6 +338,11 @@ async def cmd_continue(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
+        return
+    if session_state.current_engine == "claude":
+        session_state.set_claude_session("NEW", "➕ Nuevo chat Claude", cwd=session_state.current_cwd)
+        chat_guard.touch()
+        await safe_reply(update.message, "🟠 Modo configurado: **Nuevo chat limpio de Claude Code**.")
         return
     session_state.set_conversation("NEW", "➕ Nuevo chat independiente")
     chat_guard.touch()
@@ -276,18 +352,25 @@ async def cmd_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_current(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
         return
-    cid_display = session_state.current_conversation_id if session_state.current_conversation_id else "Último (-c)"
+    is_claude = session_state.current_engine == "claude"
+    engine_str = "🟠 Claude Code" if is_claude else "🔵 Antigravity (AGY)"
+    cid_display = (
+        (session_state.claude_session_id or "Último (-c)")
+        if is_claude
+        else (session_state.current_conversation_id or "Último (-c)")
+    )
+    title_display = session_state.claude_session_title if is_claude else session_state.current_conversation_title
     model_disp, max_ctx = get_effective_model_display()
     cwd_summary = format_active_cwd_summary()
 
     await safe_reply(
         update.message,
         f"📍 **Configuración Actual de Sesión (Persistente):**\n\n"
+        f"⚙️ **Motor activo:** **{engine_str}**\n\n"
         f"🗂️ **Proyecto / Directorio (`cwd`):**\n{cwd_summary}\n\n"
-        f"💬 **Chat activo:**\n**{session_state.current_conversation_title}**\n`ID:` `{cid_display}`\n\n"
-        f"🤖 **Modelo:** {model_disp} (`{max_ctx:,}` tokens)\n"
-        f"⚡ **Esfuerzo:** `{session_state.current_effort.upper()}`\n"
-        f"💾 **Estado guardado en:** `~/.gemini/antigravity-cli/telegram_bot_state.json`",
+        f"💬 **Chat activo:**\n**{title_display}**\n`ID:` `{cid_display}`\n\n"
+        f"🤖 **Modelo AGY:** {model_disp} (`{max_ctx:,}` tokens)\n"
+        f"⚡ **Esfuerzo:** `{session_state.current_effort.upper()}`",
     )
 
 
@@ -450,47 +533,4 @@ async def cmd_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
 
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_authorized(update) or not update.message:
-        return
-
-    text_prompt = (update.message.text or "").strip()
-    caption_prompt = (update.message.caption or "").strip()
-    prompt = text_prompt or caption_prompt
-    temp_files = []
-
-    # Si el mensaje incluye foto
-    if update.message.photo:
-        try:
-            largest_photo = update.message.photo[-1]
-            file = await largest_photo.get_file()
-            tmp_img = os.path.join(tempfile.gettempdir(), f"telegram_photo_{largest_photo.file_unique_id}.jpg")
-            await file.download_to_drive(tmp_img)
-            temp_files.append(tmp_img)
-
-            if prompt:
-                prompt = f"[Foto adjunta guardada en: {tmp_img}]\n\n{prompt}"
-            else:
-                prompt = f"[Foto adjunta guardada en: {tmp_img}]\nPor favor analiza esta imagen."
-        except Exception as e:
-            await safe_reply(update.message, f"⚠️ Error descargando la imagen: `{e}`")
-            return
-
-    if not prompt:
-        return
-
-    # Mensajes > LONG_MESSAGE_THRESHOLD: esperar fragmentos y unirlos.
-    # Todo pasa por chat_guard, que pregunta el chat si hubo inactividad.
-    buffered = await long_message_buffer.handle(
-        update.message.chat_id, prompt, update.message, chat_guard_submit, temp_files=temp_files
-    )
-    if buffered:
-        return
-
-    await chat_guard_submit(prompt, update.message, temp_files=temp_files)
-
-
-async def chat_guard_submit(prompt: str, message_obj, temp_files=None):
-    await chat_guard.handle(prompt, message_obj, execution_manager.submit, temp_files=temp_files)
 
