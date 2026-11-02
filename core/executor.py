@@ -8,7 +8,7 @@ import traceback
 from dataclasses import dataclass, field
 from typing import Optional, List, Any
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from core.config import AGY_BIN, HOME_DIR, logger
+from core.config import AGY_BIN, CLAUDE_BIN, HOME_DIR, logger
 from core.state import session_state
 from core.utils import (
     safe_reply,
@@ -19,6 +19,7 @@ from core.utils import (
     split_markdown_chunks,
 )
 from core.chats_db import get_all_conversations
+from core.claude_chats import is_claude_busy_in_cwd
 
 
 def _get_latest_conversation():
@@ -37,6 +38,7 @@ class QueuedJob:
     message_obj: Any
     enqueued_at: float = field(default_factory=time.time)
     queue_notice_msg: Any = None
+    engine: str = "agy"
     conv_id: Optional[str] = None
     conv_title: str = ""
     model: Optional[str] = None
@@ -165,20 +167,29 @@ class AGYExecutionManager:
         effort_override: Optional[str] = None,
         temp_files: Optional[List[str]] = None,
     ):
-        chosen_model = model_override if model_override else session_state.current_model
+        is_claude = session_state.current_engine == "claude"
+        chosen_model = (
+            (model_override if model_override else session_state.claude_model)
+            if is_claude
+            else (model_override if model_override else session_state.current_model)
+        )
         chosen_effort = effort_override if effort_override else session_state.current_effort
-        if chosen_model:
+        if chosen_model and not is_claude:
             for eff in ("low", "medium", "high"):
                 if chosen_model.lower().endswith(f"-{eff}"):
                     chosen_effort = eff
                     break
 
+        active_conv_id = session_state.claude_session_id if is_claude else session_state.current_conversation_id
+        active_conv_title = session_state.claude_session_title if is_claude else session_state.current_conversation_title
+
         job = QueuedJob(
             job_id=uuid.uuid4().hex[:8],
             prompt=prompt,
             message_obj=message_obj,
-            conv_id=session_state.current_conversation_id,
-            conv_title=session_state.current_conversation_title,
+            engine="claude" if is_claude else "agy",
+            conv_id=active_conv_id,
+            conv_title=active_conv_title,
             model=chosen_model,
             effort=chosen_effort,
             cwd=session_state.current_cwd,
@@ -186,7 +197,11 @@ class AGYExecutionManager:
         )
 
         # Si estaba configurado en NEW, el siguiente mensaje después de este continuará ese hilo
-        if session_state.current_conversation_id == "NEW":
+        if is_claude and session_state.claude_session_id == "NEW":
+            session_state.claude_session_id = None
+            session_state.claude_session_title = "🔄 Último chat de Claude (-c)"
+            session_state.save_state()
+        elif not is_claude and session_state.current_conversation_id == "NEW":
             session_state.current_conversation_id = None
             session_state.current_conversation_title = "🔄 Continuar último chat activo (-c)"
             session_state.save_state()
@@ -265,30 +280,69 @@ class AGYExecutionManager:
 
     async def _execute_single_job(self, job: QueuedJob):
         prompt = f"{job.prompt}\n\n[Telegram: responde ultracave, máx 4 líneas cortas salvo que pida detalle]"
-        command = [
-            AGY_BIN,
-            "-p", prompt,
-            "--output-format", "stream-json",
-            "--dangerously-skip-permissions",
-        ]
+        is_claude = job.engine == "claude"
 
-        if job.model:
-            command.extend(["--model", job.model])
-            if not job.model.lower().endswith(("-low", "-medium", "-high")) and job.effort:
-                command.extend(["--effort", job.effort])
-        elif job.effort:
-            command.extend(["--effort", job.effort])
+        if is_claude:
+            command = [
+                CLAUDE_BIN,
+                "-p", prompt,
+                "--output-format", "stream-json",
+                "--verbose",
+                "--dangerously-skip-permissions",
+            ]
+            if job.model:
+                command.extend(["--model", job.model])
+            if job.effort:
+                eff_cl = job.effort if job.effort in ("low", "medium", "high") else "high"
+                command.extend(["--effort", eff_cl])
 
-        if job.conv_id and job.conv_id not in ("LATEST", "NEW"):
-            command.extend(["--conversation", job.conv_id])
-            chat_label = job.conv_title
-        elif job.conv_id == "NEW":
-            chat_label = "Nuevo Chat"
+            exec_cwd_check = job.cwd if (job.cwd and os.path.isdir(job.cwd)) else HOME_DIR
+            term_busy = is_claude_busy_in_cwd(
+                exec_cwd_check,
+                job.conv_id if (job.conv_id and job.conv_id not in ("LATEST", "NEW")) else None,
+            )
+
+            if job.conv_id and job.conv_id not in ("LATEST", "NEW"):
+                command.extend(["-r", job.conv_id])
+                if term_busy:
+                    command.append("--fork-session")
+                    chat_label = f"🟠 {job.conv_title} (Fork Anti-Colisión)"
+                else:
+                    chat_label = f"🟠 {job.conv_title}"
+            elif job.conv_id == "NEW":
+                chat_label = "🟠 Nuevo Chat Claude"
+            else:
+                command.append("-c")
+                if term_busy:
+                    command.append("--fork-session")
+                    chat_label = f"🟠 {job.conv_title or 'Último Chat Claude'} (Fork Anti-Colisión)"
+                else:
+                    chat_label = f"🟠 {job.conv_title or 'Último Chat Claude'}"
         else:
-            command.append("-c")
-            # Mostrar el título real del último chat en vez de un genérico
-            latest = _get_latest_conversation()
-            chat_label = f"💬 {latest[1]}" if latest else "Último Chat Activo"
+            command = [
+                AGY_BIN,
+                "-p", prompt,
+                "--output-format", "stream-json",
+                "--dangerously-skip-permissions",
+            ]
+
+            if job.model:
+                command.extend(["--model", job.model])
+                if not job.model.lower().endswith(("-low", "-medium", "-high")) and job.effort:
+                    command.extend(["--effort", job.effort])
+            elif job.effort:
+                command.extend(["--effort", job.effort])
+
+            if job.conv_id and job.conv_id not in ("LATEST", "NEW"):
+                command.extend(["--conversation", job.conv_id])
+                chat_label = job.conv_title
+            elif job.conv_id == "NEW":
+                chat_label = "Nuevo Chat"
+            else:
+                command.append("-c")
+                # Mostrar el título real del último chat en vez de un genérico
+                latest = _get_latest_conversation()
+                chat_label = f"💬 {latest[1]}" if latest else "Último Chat Activo"
 
         exec_cwd = job.cwd if (job.cwd and os.path.isdir(job.cwd)) else HOME_DIR
         cwd_short = session_state.get_cwd_short_name(exec_cwd)
@@ -308,6 +362,7 @@ class AGYExecutionManager:
         env = os.environ.copy()
         env["PATH"] = f"/home/paulobot/.local/bin:/home/paulobot/.gemini/antigravity-cli/bin:{env.get('PATH', '')}"
         env["AGY_FROM_TELEGRAM"] = "1"
+        env["CLAUDE_FROM_TELEGRAM"] = "1"
 
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -340,7 +395,7 @@ class AGYExecutionManager:
 
                         try:
                             event_data = json.loads(line_str)
-                            event_type = event_data.get("event")
+                            event_type = event_data.get("event") or event_data.get("type")
 
                             if event_type == "step_update":
                                 step = event_data.get("step_update", {})
@@ -361,14 +416,37 @@ class AGYExecutionManager:
                                 elif (step.get("thinking_delta") or step.get("thinking")) and not accumulated_text:
                                     current_tool_action = "\n\n🧠 *Razonando...*"
 
-                            elif event_type == "result":
-                                res = event_data.get("result", {})
-                                if "usage" in res and res["usage"]:
-                                    session_state.save_usage_cache(res["usage"])
+                            elif event_type == "assistant":
+                                msg_obj = event_data.get("message", {})
+                                content_list = msg_obj.get("content", [])
+                                if isinstance(content_list, list):
+                                    text_parts = []
+                                    for blk in content_list:
+                                        if not isinstance(blk, dict):
+                                            continue
+                                        btype = blk.get("type")
+                                        if btype == "text" and blk.get("text"):
+                                            text_parts.append(blk["text"])
+                                        elif btype == "tool_use":
+                                            tname = blk.get("name", "tool")
+                                            current_tool_action = f"\n\n🛠️ *Ejecutando `{tname}`...*"
+                                    if text_parts:
+                                        accumulated_text = "\n".join(text_parts)
+                                        current_tool_action = ""
 
-                                final_resp = res.get("response")
-                                if final_resp:
-                                    accumulated_text = final_resp
+                            elif event_type == "result":
+                                res = event_data.get("result")
+                                if isinstance(res, dict):
+                                    if "usage" in res and res["usage"]:
+                                        session_state.save_usage_cache(res["usage"])
+                                    final_resp = res.get("response")
+                                    if final_resp:
+                                        accumulated_text = final_resp
+                                elif isinstance(res, str) and res.strip():
+                                    accumulated_text = res.strip()
+                                if event_data.get("session_id") and is_claude and session_state.claude_session_id is None:
+                                    session_state.claude_session_id = event_data["session_id"]
+                                    session_state.save_state()
                                 current_tool_action = ""
 
                         except Exception:
@@ -416,9 +494,10 @@ class AGYExecutionManager:
 
             # Fijar el chat concreto usado: así el siguiente mensaje no depende de
             # "-c" (que podría apuntar a otra sesión abierta desde la laptop).
-            pinned_title = self._pin_conversation_after_run(job)
+            pinned_title = None if is_claude else self._pin_conversation_after_run(job)
             footer_title = pinned_title or job.conv_title or chat_label
-            footer = f"\n\n— 💬 _{footer_title.lstrip('💬➕🔄 ').strip()[:60]}_ • 📂 `{cwd_short}`"
+            engine_tag = "🟠 Claude" if is_claude else "💬"
+            footer = f"\n\n— {engine_tag} _{footer_title.lstrip('🟠💬➕🔄 ').strip()[:60]}_ • 📂 `{cwd_short}`"
             if len(chunks[-1]) + len(footer) <= 4000:
                 chunks[-1] = chunks[-1] + footer
             else:

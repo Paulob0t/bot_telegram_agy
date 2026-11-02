@@ -20,6 +20,7 @@ from core.config import CHAT_IDLE_MINUTES, logger
 from core.state import session_state
 from core.utils import safe_reply
 from core.chats_db import get_all_conversations, get_conversation_title
+from core.claude_chats import list_claude_sessions_for_cwd
 
 
 @dataclass
@@ -43,8 +44,10 @@ class ChatGuard:
     def needs_confirmation(self) -> bool:
         if self.idle_seconds <= 0:
             return False
-        # Chat nuevo explícito: no hay riesgo de mezclar
-        if session_state.current_conversation_id == "NEW":
+        is_claude = session_state.current_engine == "claude"
+        if is_claude and session_state.claude_session_id == "NEW":
+            return False
+        if not is_claude and session_state.current_conversation_id == "NEW":
             return False
         if self.last_prompt_at is None:
             return True
@@ -76,7 +79,12 @@ class ChatGuard:
         if not held:
             return None
 
-        title = session_state.current_conversation_title or "Último chat activo"
+        is_claude = session_state.current_engine == "claude"
+        title = (
+            (session_state.claude_session_title or "Último chat Claude")
+            if is_claude
+            else (session_state.current_conversation_title or "Último chat activo")
+        )
         preview = held.prompt.replace("\n", " ")
         if len(preview) > 80:
             preview = preview[:80] + "..."
@@ -103,7 +111,15 @@ class ChatGuard:
         if not held:
             return None
 
-        all_chats = get_all_conversations()
+        is_claude = session_state.current_engine == "claude"
+        if is_claude:
+            c_sessions = list_claude_sessions_for_cwd(session_state.current_cwd)
+            all_chats = [(s["session_id"], s["title"], s.get("cwd", session_state.current_cwd)) for s in c_sessions]
+            icon_prefix = "🟠"
+        else:
+            all_chats = get_all_conversations()
+            icon_prefix = "💬"
+
         total_chats = len(all_chats)
         if total_chats == 0:
             return None
@@ -116,7 +132,7 @@ class ChatGuard:
         for idx, (_, title, _) in enumerate(current_slice):
             abs_idx = page * page_size + idx
             clean_title = title.strip().replace("\n", " ")
-            btn_text = f"💬 {clean_title[:32]}..." if len(clean_title) > 32 else f"💬 {clean_title}"
+            btn_text = f"{icon_prefix} {clean_title[:32]}..." if len(clean_title) > 32 else f"{icon_prefix} {clean_title}"
             keyboard.append([InlineKeyboardButton(btn_text, callback_data=f"cg_sel:{hold_id}:{abs_idx}")])
 
         nav_row = []
@@ -190,18 +206,35 @@ class ChatGuard:
                         pass
             return "🗑️ Mensaje descartado."
         if action == "new":
-            session_state.set_conversation("NEW", "➕ Nuevo chat independiente")
-            label = "🆕 Nuevo chat"
-        elif action == "sel" and chat_idx is not None:
-            all_chats = get_all_conversations()
-            if 0 <= chat_idx < len(all_chats):
-                cid, ctitle, _ = all_chats[chat_idx]
-                session_state.set_conversation(cid, f"💬 {ctitle}")
-                label = f"💬 {ctitle}"
+            if session_state.current_engine == "claude":
+                session_state.set_claude_session("NEW", "➕ Nuevo chat Claude", cwd=session_state.current_cwd)
+                label = "🆕 Nuevo chat Claude"
             else:
-                label = f"➡️ {session_state.current_conversation_title}"
+                session_state.set_conversation("NEW", "➕ Nuevo chat independiente")
+                label = "🆕 Nuevo chat"
+        elif action == "sel" and chat_idx is not None:
+            if session_state.current_engine == "claude":
+                c_sessions = list_claude_sessions_for_cwd(session_state.current_cwd)
+                if 0 <= chat_idx < len(c_sessions):
+                    cs = c_sessions[chat_idx]
+                    session_state.set_claude_session(cs["session_id"], cs["title"], cwd=cs.get("cwd"))
+                    label = f"🟠 {cs['title']}"
+                else:
+                    label = f"➡️ {session_state.claude_session_title}"
+            else:
+                all_chats = get_all_conversations()
+                if 0 <= chat_idx < len(all_chats):
+                    cid, ctitle, _ = all_chats[chat_idx]
+                    session_state.set_conversation(cid, f"💬 {ctitle}")
+                    label = f"💬 {ctitle}"
+                else:
+                    label = f"➡️ {session_state.current_conversation_title}"
         else:
-            label = f"➡️ {session_state.current_conversation_title}"
+            label = (
+                f"➡️ {session_state.claude_session_title}"
+                if session_state.current_engine == "claude"
+                else f"➡️ {session_state.current_conversation_title}"
+            )
 
         logger.info("ChatGuard: %s (%s)", action, hold_id)
         self.touch()
