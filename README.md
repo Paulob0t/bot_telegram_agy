@@ -119,6 +119,8 @@ systemctl --user enable --now telegram-bot.service
 | Comando | Alias | Descripción |
 | :--- | :--- | :--- |
 | `/start` | `/help`, `/ayuda` | Muestra el panel general de ayuda y el estado actual |
+| `/claude` | — | Lista los proyectos con chats de Claude Code (ej. `Stover`) y permite continuar sesiones (`claude -r` / `-c`) |
+| `/agy` | — | Regresa el motor activo a Antigravity (`agy`) |
 | `/project` | `/cd`, `/workspace`, `/repo` | Abre el selector de proyectos o cambia rápido (`/cd stover`) |
 | `/screen` | `/ss`, `/captura` | Toma una captura de pantalla del escritorio Wayland (`grim`) y la envía al chat |
 | `/queue` | `/cola` | Muestra la tarea en ejecución y la cola de mensajes en espera |

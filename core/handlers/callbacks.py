@@ -1,57 +1,186 @@
+"""
+Enrutador modular de CallbackQuery (botones inline) organizado por dominio:
+- Claude Code (`cl_*`)
+- ChatGuard (`cg_*`)
+- Proyectos / cwd (`proj_*`)
+- Historial y borrado AGY (`res_*`, `del_*`)
+- Modelos, Esfuerzo y Uso (`mod*`, `eff:*`, `usage_sync`, `power:*`)
+- Cola de procesos y Capturas (`q_*`, `screen:*`)
+"""
+import asyncio
 import os
 import time
-import asyncio
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
-from core.config import HOME_DIR, PROJECTS_BASE_DIR
-from core.state import session_state
-from core.utils import is_authorized, safe_edit, safe_reply, format_uptime, get_git_branch
+from core.chat_guard import chat_guard
 from core.chats_db import (
-    get_conversation_title,
-    delete_single_chat,
-    build_resume_keyboard,
     build_delete_keyboard,
+    build_resume_keyboard,
+    delete_single_chat,
+    get_conversation_title,
+)
+from core.claude_chats import (
+    build_claude_delete_keyboard,
+    build_claude_projects_keyboard,
+    build_claude_sessions_keyboard,
+    delete_claude_session,
+    find_session_by_prefix,
+    get_claude_slug_for_cwd,
+    list_claude_projects,
+)
+from core.config import HOME_DIR, PROJECTS_BASE_DIR
+from core.desktop_tools import build_screenshot_keyboard, capture_wayland_screenshot
+from core.executor import execution_manager
+from core.models import (
+    build_ai_quotas_dashboard,
+    build_models_keyboard,
+    get_effective_model_display,
+    sync_models_from_cli,
 )
 from core.projects import (
     build_projects_keyboard,
     format_active_cwd_summary,
     list_available_projects,
 )
-from core.models import (
-    build_models_keyboard,
-    build_ai_quotas_dashboard,
-    get_effective_model_display,
-    get_models_catalog,
-    sync_models_from_cli,
-)
-from core.desktop_tools import (
-    capture_wayland_screenshot,
-    build_screenshot_keyboard,
-)
-from core.executor import execution_manager
-from core.chat_guard import chat_guard
+from core.state import session_state
+from core.utils import is_authorized, safe_edit, safe_reply
 
 
-async def shutdown_bot_service():
+async def _shutdown_bot_service():
     await asyncio.sleep(1.0)
     proc = await asyncio.create_subprocess_exec("systemctl", "--user", "stop", "telegram-bot.service")
     await proc.wait()
 
 
-async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    if not query or not is_authorized(update):
-        return
+async def _handle_claude_callbacks(query, data: str) -> bool:
+    if data == "cl_home":
+        markup, text = build_claude_projects_keyboard()
+        await safe_edit(query.message, text, reply_markup=markup)
+        return True
 
-    await query.answer()
-    data = query.data
+    if data == "cl_engine:agy":
+        session_state.set_engine("agy")
+        chat_guard.touch()
+        await safe_edit(
+            query.message,
+            f"🔵 **Motor cambiado a Antigravity (AGY).**\n"
+            f"• 💬 **Chat AGY:** `{session_state.current_conversation_title}`\n"
+            f"• 📂 **Proyecto (`cwd`):** `{session_state.get_cwd_short_name()}`",
+        )
+        return True
 
-    if data == "res_noop":
-        return
+    if data.startswith("cl_proj:"):
+        _, proj_idx_s, page_s = data.split(":", 2)
+        markup, text = build_claude_sessions_keyboard(int(proj_idx_s), page=int(page_s))
+        await safe_edit(query.message, text, reply_markup=markup)
+        return True
 
-    # =========================================================
-    # 🧭 CALLBACKS DE GUARDIA DE CHAT (confirmar chat tras inactividad)
-    # =========================================================
+    if data.startswith("cl_sel:"):
+        _, proj_idx_s, short_id = data.split(":", 2)
+        projects = list_claude_projects()
+        pidx = int(proj_idx_s)
+        if 0 <= pidx < len(projects):
+            proj = projects[pidx]
+            sess = find_session_by_prefix(str(proj["slug"]), short_id)
+            if sess:
+                session_state.set_claude_session(sess["session_id"], sess["title"], cwd=str(proj["cwd"]))
+                chat_guard.touch()
+                await safe_edit(
+                    query.message,
+                    f"🟠 **Sesión de Claude Code activada:**\n\n"
+                    f"• 💬 **Chat:** `{sess['title']}`\n"
+                    f"• 🆔 **ID:** `{sess['session_id']}`\n"
+                    f"• 📂 **Proyecto (`cwd`):** `{proj['name']}`\n\n"
+                    f"🚀 *Cualquier mensaje que envíes ahora continuará este hilo con Claude (`claude -r`). Para regresar a AGY usa `/agy`.*",
+                )
+                return True
+        await safe_edit(query.message, "❌ No se encontró esa sesión de Claude.")
+        return True
+
+    if data.startswith("cl_cont:"):
+        pidx = int(data.split(":", 1)[1])
+        projects = list_claude_projects()
+        if 0 <= pidx < len(projects):
+            proj = projects[pidx]
+            session_state.set_claude_session(None, f"🔄 Último chat en {proj['name']} (-c)", cwd=str(proj["cwd"]))
+            chat_guard.touch()
+            await safe_edit(
+                query.message,
+                f"🟠 **Claude Code configurado en modo `-c` (Último activo):**\n"
+                f"• 📂 **Proyecto (`cwd`):** `{proj['name']}`\n\n"
+                f"🚀 *Tus próximos mensajes continuarán la última sesión de Claude en este proyecto.*",
+            )
+            return True
+
+    if data.startswith("cl_new:"):
+        pidx = int(data.split(":", 1)[1])
+        projects = list_claude_projects()
+        if 0 <= pidx < len(projects):
+            proj = projects[pidx]
+            session_state.set_claude_session("NEW", f"➕ Nuevo chat en {proj['name']}", cwd=str(proj["cwd"]))
+            chat_guard.touch()
+            await safe_edit(
+                query.message,
+                f"🟠 **Nuevo chat de Claude Code preparado:**\n"
+                f"• 📂 **Proyecto (`cwd`):** `{proj['name']}`\n\n"
+                f"🚀 *El siguiente mensaje abrirá una conversación nueva de Claude en este proyecto.*",
+            )
+            return True
+
+    if data.startswith("cl_del_page:"):
+        _, proj_idx_s, page_s = data.split(":", 2)
+        markup, text = build_claude_delete_keyboard(int(proj_idx_s), page=int(page_s))
+        await safe_edit(query.message, text, reply_markup=markup)
+        return True
+
+    if data.startswith("cl_del_ask:"):
+        _, proj_idx_s, short_id = data.split(":", 2)
+        pidx = int(proj_idx_s)
+        projects = list_claude_projects()
+        if 0 <= pidx < len(projects):
+            proj = projects[pidx]
+            sess = find_session_by_prefix(str(proj["slug"]), short_id)
+            if sess:
+                keyboard = InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton("🔴 Sí, Borrar .jsonl", callback_data=f"cl_del_ok:{pidx}:{short_id}"),
+                        InlineKeyboardButton("❌ Cancelar", callback_data=f"cl_del_page:{pidx}:0"),
+                    ]
+                ])
+                await safe_edit(
+                    query.message,
+                    f"⚠️ **¿Eliminar sesión de Claude en `{proj['name']}`?**\n\n"
+                    f"💬 **Título:** `{sess['title']}`\n"
+                    f"🆔 **ID:** `{sess['session_id']}`",
+                    reply_markup=keyboard,
+                )
+                return True
+        await safe_edit(query.message, "❌ Sesión de Claude no encontrada.")
+        return True
+
+    if data.startswith("cl_del_ok:"):
+        _, proj_idx_s, short_id = data.split(":", 2)
+        pidx = int(proj_idx_s)
+        projects = list_claude_projects()
+        if 0 <= pidx < len(projects):
+            proj = projects[pidx]
+            slug = str(proj["slug"])
+            sess = find_session_by_prefix(slug, short_id)
+            if sess and delete_claude_session(slug, sess["session_id"]):
+                markup, text = build_claude_delete_keyboard(pidx, page=0)
+                await safe_edit(
+                    query.message,
+                    f"✅ **Sesión de Claude eliminada:** `{sess['title']}`\n\n{text}",
+                    reply_markup=markup,
+                )
+                return True
+        await safe_edit(query.message, "❌ No se pudo eliminar la sesión de Claude.")
+        return True
+
+    return False
+
+
+async def _handle_chat_guard_callbacks(query, data: str) -> bool:
     if data.startswith("cg_pick:"):
         _, hold_id, page_str = data.split(":", 2)
         view = chat_guard.build_picker_view(hold_id, page=int(page_str))
@@ -60,7 +189,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             await safe_edit(query.message, text, reply_markup=markup)
         else:
             await safe_edit(query.message, "⌛ Esta pregunta expiró o no hay chats guardados.")
-        return
+        return True
 
     if data.startswith("cg_back:"):
         hold_id = data.split(":", 1)[1]
@@ -70,29 +199,43 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             await safe_edit(query.message, text, reply_markup=markup)
         else:
             await safe_edit(query.message, "⌛ Esta pregunta expiró. Reenvía el mensaje.")
-        return
+        return True
 
     if data.startswith("cg_sel:"):
         _, hold_id, idx_str = data.split(":", 2)
         result = await chat_guard.resolve("sel", hold_id, execution_manager.submit, chat_idx=int(idx_str))
         await safe_edit(query.message, result or "⌛ Esta pregunta expiró. Reenvía el mensaje.")
-        return
+        return True
 
     if data.startswith(("cg_cont:", "cg_new:", "cg_drop:")):
         action_key, hold_id = data.split(":", 1)
         action = {"cg_cont": "cont", "cg_new": "new", "cg_drop": "drop"}[action_key]
         result = await chat_guard.resolve(action, hold_id, execution_manager.submit)
         await safe_edit(query.message, result or "⌛ Esta pregunta expiró. Reenvía el mensaje.")
-        return
+        return True
 
-    # =========================================================
-    # 🗂️ CALLBACKS DE SELECTOR DE PROYECTO / DIRECTORIO (cwd)
-    # =========================================================
+    return False
+
+
+def _build_project_claude_shortcut(target_path: str, label_name: str):
+    slug = get_claude_slug_for_cwd(target_path)
+    if not slug:
+        return None
+    projects_cl = list_claude_projects()
+    cl_idx = next((i for i, p in enumerate(projects_cl) if p["slug"] == slug), None)
+    if cl_idx is None:
+        return None
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"🟠 Ver chats de Claude en {label_name}", callback_data=f"cl_proj:{cl_idx}:0")]
+    ])
+
+
+async def _handle_project_callbacks(query, data: str) -> bool:
     if data.startswith("proj_page:"):
         page = int(data[10:])
         markup, text = build_projects_keyboard(page=page)
         await safe_edit(query.message, text, reply_markup=markup)
-        return
+        return True
 
     if data == "proj_home":
         session_state.set_cwd(HOME_DIR)
@@ -100,9 +243,9 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await safe_edit(
             query.message,
             f"✅ **Directorio de trabajo (`cwd`) cambiado a Home:**\n\n{summary}\n\n"
-            "🚀 *Los próximos comandos de AGY se ejecutarán aquí.*",
+            "🚀 *Los próximos comandos se ejecutarán aquí.*",
         )
-        return
+        return True
 
     if data.startswith("proj_sel:"):
         folder_name = data[9:]
@@ -112,63 +255,66 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             await safe_edit(
                 query.message,
                 f"✅ **Proyecto activado:**\n\n{summary}\n\n"
-                "🚀 *Los próximos comandos de AGY se ejecutarán directamente dentro de este repositorio.*",
+                "🚀 *Los próximos comandos se ejecutarán directamente dentro de este repositorio.*",
+                reply_markup=_build_project_claude_shortcut(target_path, folder_name),
             )
         else:
             await safe_edit(query.message, f"❌ La carpeta `{target_path}` ya no existe.")
-        return
+        return True
 
     if data.startswith("proj_idx:"):
         idx = int(data[9:])
         projects = list_available_projects()
         if 0 <= idx < len(projects):
-            _, target_path, _ = projects[idx]
+            name_p, target_path, _ = projects[idx]
             if session_state.set_cwd(target_path):
                 summary = format_active_cwd_summary()
                 await safe_edit(
                     query.message,
                     f"✅ **Proyecto activado:**\n\n{summary}\n\n"
-                    "🚀 *Los próximos comandos de AGY se ejecutarán directamente dentro de este repositorio.*",
+                    "🚀 *Los próximos comandos se ejecutarán directamente dentro de este repositorio.*",
+                    reply_markup=_build_project_claude_shortcut(target_path, name_p),
                 )
-                return
+                return True
         await safe_edit(query.message, "❌ No se pudo encontrar el proyecto seleccionado.")
-        return
+        return True
 
-    # =========================================================
-    # 💬 CALLBACKS DE HISTORIAL Y BORRADO DE CHATS
-    # =========================================================
+    return False
+
+
+async def _handle_agy_chats_callbacks(query, data: str) -> bool:
     if data.startswith("res_page:"):
         page = int(data[9:])
         markup, text = build_resume_keyboard(page=page)
         if markup:
             await safe_edit(query.message, text, reply_markup=markup)
-        return
+        return True
 
-    if data.startswith("del_menu:") or data.startswith("del_page:"):
+    if data.startswith(("del_menu:", "del_page:")):
         page = int(data[9:])
         markup, text = build_delete_keyboard(page=page)
         if markup:
             await safe_edit(query.message, text, reply_markup=markup)
-        return
+        return True
 
     if data.startswith("del_ask:"):
         conv_id = data[8:]
         title = get_conversation_title(conv_id)
-        keyboard = [
+        keyboard = InlineKeyboardMarkup([
             [
                 InlineKeyboardButton("🔴 Sí, Eliminar Definitivamente", callback_data=f"del_confirm:{conv_id}"),
                 InlineKeyboardButton("❌ Cancelar", callback_data="del_menu:0"),
             ]
-        ]
+        ])
         await safe_edit(
             query.message,
             f"⚠️ **¿Estás seguro de eliminar esta conversación?**\n\n"
             f"💬 **Título:** {title}\n"
             f"`ID:` `{conv_id}`\n\n"
             f"*Esta acción borrará el historial y sus archivos del disco.*",
-            reply_markup=InlineKeyboardMarkup(keyboard),
+            reply_markup=keyboard,
         )
-        return
+        return True
 
     if data.startswith("del_confirm:"):
         conv_id = data[12:]
@@ -183,7 +329,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             )
         else:
             await safe_edit(query.message, f"✅ Conversación '{title}' eliminada. Ya no quedan más chats.")
-        return
+        return True
 
     if data.startswith("res:"):
         target = data[4:]
@@ -203,16 +349,17 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 query.message,
                 f"✅ **Chat seleccionado y guardado:**\n**{title}**\n\n*(ID: `{target}`)*\n\nCualquier mensaje que envíes continuará en este hilo.",
             )
-        return
+        return True
 
-    # =========================================================
-    # 🤖 CALLBACKS DE MODELO, ESFUERZO Y ENERGÍA
-    # =========================================================
+    return False
+
+
+async def _handle_model_and_system_callbacks(query, data: str) -> bool:
     if data == "usage_sync":
         await safe_edit(query.message, "🔄 *Sincronizando cuotas de IA (Claude Code & Antigravity)...*")
         markup, text = await build_ai_quotas_dashboard()
         await safe_edit(query.message, text, reply_markup=markup)
-        return
+        return True
 
     if data == "mod_sync":
         await safe_edit(query.message, "🔄 *Consultando `agy models` para sincronizar el catálogo...*")
@@ -226,14 +373,11 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             )
         except Exception as e:
             await safe_edit(query.message, f"❌ Error sincronizando modelos desde el CLI: `{e}`")
-        return
+        return True
 
     if data.startswith("mod:"):
         target = data[4:]
-        if target == "DEFAULT":
-            session_state.set_model(None)
-        else:
-            session_state.set_model(target)
+        session_state.set_model(None if target == "DEFAULT" else target)
         eff_disp, ctx_win = get_effective_model_display()
         await safe_edit(
             query.message,
@@ -242,7 +386,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             f"• ⚡ **Esfuerzo sincronizado:** `{session_state.current_effort.upper()}`\n"
             f"• 🪟 **Ventana de contexto:** `{ctx_win:,}` tokens",
         )
-        return
+        return True
 
     if data.startswith("eff:"):
         target = data[4:]
@@ -253,7 +397,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             f"✅ **Nivel de razonamiento guardado:** `{target.upper()}`\n"
             f"• 🤖 **Modelo activo:** {eff_disp}",
         )
-        return
+        return True
 
     if data.startswith("power:"):
         action = data[6:]
@@ -261,17 +405,18 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             await safe_edit(query.message, "✅ **Operación cancelada:** El bot sigue encendido y activo.")
         elif action == "SHUTDOWN":
             await safe_edit(query.message, "👋 **Apagando bot de Telegram...**\n\nEl servicio se ha detenido. ¡Nos vemos!")
-            asyncio.create_task(shutdown_bot_service())
-        return
+            asyncio.create_task(_shutdown_bot_service())
+        return True
 
-    # =========================================================
-    # ⚙️ CALLBACKS DE COLA Y CONTROL DE PROCESOS AGY
-    # =========================================================
+    return False
+
+
+async def _handle_queue_and_screen_callbacks(query, data: str) -> bool:
     if data == "q_cancel_active":
         killed = await execution_manager.cancel_active()
         if not killed:
             await query.answer("No había ningún proceso activo.", show_alert=False)
-        return
+        return True
 
     if data == "q_cancel_all":
         cleared = await execution_manager.clear_queue()
@@ -282,20 +427,17 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             f"• Proceso activo cancelado: `{'Sí' if killed else 'No'}`\n"
             f"• Mensajes en cola descartados: `{cleared}`",
         )
-        return
+        return True
 
     if data.startswith("q_drop:"):
         job_id = data[7:]
         removed = await execution_manager.drop_queued_job(job_id)
         if removed:
             preview = removed.prompt[:80] + ("..." if len(removed.prompt) > 80 else "")
-            await safe_edit(
-                query.message,
-                f"🗑️ **Mensaje retirado de la cola:**\n`{preview}`",
-            )
+            await safe_edit(query.message, f"🗑️ **Mensaje retirado de la cola:**\n`{preview}`")
         else:
             await safe_edit(query.message, "ℹ️ Este mensaje ya había iniciado su ejecución o ya no estaba en la cola.")
-        return
+        return True
 
     if data.startswith("q_force:"):
         job_id = data[8:]
@@ -308,23 +450,20 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             )
         else:
             await safe_edit(query.message, "ℹ️ El mensaje ya se encuentra en ejecución o no estaba en la cola.")
-        return
+        return True
 
-    # =========================================================
-    # 📸 CALLBACKS DE CAPTURA DE PANTALLA (/screen o /ss)
-    # =========================================================
     if data == "screen:delete":
         try:
             await query.message.delete()
         except Exception:
             pass
-        return
+        return True
 
     if data == "screen:capture":
         ok, result = await capture_wayland_screenshot()
         if not ok:
             await safe_reply(query.message, f"❌ **Error tomando captura:** `{result}`")
-            return
+            return True
         try:
             caption = f"🖥️ **Captura de Escritorio** • `{time.strftime('%Y-%m-%d %H:%M:%S')}`"
             with open(result, "rb") as photo_file:
@@ -340,5 +479,28 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                     os.remove(result)
                 except Exception:
                     pass
+        return True
+
+    return False
+
+
+async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not query or not is_authorized(update):
         return
 
+    await query.answer()
+    data = query.data or ""
+    if not data or data == "res_noop":
+        return
+
+    for handler in (
+        _handle_claude_callbacks,
+        _handle_chat_guard_callbacks,
+        _handle_project_callbacks,
+        _handle_agy_chats_callbacks,
+        _handle_model_and_system_callbacks,
+        _handle_queue_and_screen_callbacks,
+    ):
+        if await handler(query, data):
+            return

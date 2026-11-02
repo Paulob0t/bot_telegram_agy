@@ -18,6 +18,8 @@ from core.handlers.commands import (
     cmd_screen,
     cmd_usage,
     cmd_resume,
+    cmd_claude,
+    cmd_agy,
     cmd_delete,
     cmd_model,
     cmd_effort,
@@ -28,8 +30,8 @@ from core.handlers.commands import (
     cmd_queue,
     cmd_cancel,
     cmd_off,
-    handle_message,
 )
+from core.handlers.messages import handle_message
 from core.handlers.callbacks import handle_callback_query
 
 # Forzar line buffering en stdout para journalctl / systemd logs
@@ -53,6 +55,8 @@ async def post_init(application: Application) -> None:
     """Sincroniza el menú de comandos de Telegram al iniciar el bot."""
     commands = [
         BotCommand("start", "Panel principal y ayuda"),
+        BotCommand("claude", "Proyectos y chats de Claude Code"),
+        BotCommand("agy", "Cambiar motor a Antigravity (AGY)"),
         BotCommand("project", "Cambiar proyecto o repositorio (cwd)"),
         BotCommand("resume", "Historial de chats y cambiar conversación"),
         BotCommand("new", "Iniciar nuevo chat limpio"),
@@ -100,6 +104,8 @@ def main():
 
     # Comandos Generales de AGY
     application.add_handler(CommandHandler(["start", "help", "ayuda"], cmd_start))
+    application.add_handler(CommandHandler(["claude"], cmd_claude))
+    application.add_handler(CommandHandler(["agy"], cmd_agy))
     application.add_handler(CommandHandler(["usage", "tokens", "consumo"], cmd_usage))
     application.add_handler(CommandHandler(["resume", "chats", "historial"], cmd_resume))
     application.add_handler(CommandHandler(["delete", "borrar", "eliminar"], cmd_delete))
