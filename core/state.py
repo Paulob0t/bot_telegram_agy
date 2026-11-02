@@ -16,8 +16,12 @@ class BotSessionState:
     """
 
     def __init__(self):
+        self.current_engine: str = "agy"  # 'agy' o 'claude'
         self.current_conversation_id: Optional[str] = None  # None = último (-c), 'NEW' = nuevo, o UUID
         self.current_conversation_title: str = "🔄 Continuar último chat activo (-c)"
+        self.claude_session_id: Optional[str] = None  # None = último (-c), 'NEW' = nuevo, o UUID de Claude
+        self.claude_session_title: str = "🔄 Último chat de Claude (-c)"
+        self.claude_model: Optional[str] = None  # None = default, o 'sonnet', 'opus', 'haiku'
         self.current_model: Optional[str] = None  # None = por defecto o ID específico
         self.current_effort: str = "low"  # low, medium, high, xhigh, max
         self.current_cwd: str = HOME_DIR  # Directorio de trabajo activo para AGY
@@ -76,7 +80,15 @@ class BotSessionState:
             else:
                 self.current_cwd = HOME_DIR
 
-            # 4. Restaurar conversación activa y sincronizar título con SQLite
+            # 4. Restaurar motor ('agy' o 'claude') y sesiones
+            engine = str(data.get("current_engine", "agy")).lower()
+            self.current_engine = "claude" if engine == "claude" else "agy"
+            self.claude_session_id = data.get("claude_session_id", None)
+            self.claude_session_title = data.get("claude_session_title", "🔄 Último chat de Claude (-c)")
+            c_mod = data.get("claude_model", None)
+            self.claude_model = str(c_mod).strip() if c_mod else None
+
+            # 5. Restaurar conversación activa de AGY y sincronizar título con SQLite
             saved_conv_id = data.get("current_conversation_id", None)
             if saved_conv_id in (None, "LATEST"):
                 self.current_conversation_id = None
@@ -110,8 +122,12 @@ class BotSessionState:
             os.makedirs(state_dir, exist_ok=True)
             self.updated_at = time.time()
             data = {
+                "current_engine": self.current_engine,
                 "current_conversation_id": self.current_conversation_id,
                 "current_conversation_title": self.current_conversation_title,
+                "claude_session_id": self.claude_session_id,
+                "claude_session_title": self.claude_session_title,
+                "claude_model": self.claude_model,
                 "current_model": self.current_model,
                 "current_effort": self.current_effort,
                 "current_cwd": self.current_cwd,
@@ -158,6 +174,10 @@ class BotSessionState:
         return True
 
     def set_model(self, model_id: Optional[str]):
+        if self.current_engine == "claude":
+            self.claude_model = model_id if (model_id and model_id != "DEFAULT") else None
+            self.save_state()
+            return
         self.current_model = model_id if (model_id and model_id != "DEFAULT") else None
         if self.current_model:
             lower_m = self.current_model.lower()
@@ -188,8 +208,21 @@ class BotSessionState:
         return True
 
     def set_conversation(self, conv_id: Optional[str], title: str):
+        self.current_engine = "agy"
         self.current_conversation_id = conv_id
         self.current_conversation_title = title
+        self.save_state()
+
+    def set_claude_session(self, session_id: Optional[str], title: str, cwd: Optional[str] = None):
+        self.current_engine = "claude"
+        self.claude_session_id = session_id
+        self.claude_session_title = title
+        if cwd and os.path.isdir(cwd):
+            self.current_cwd = os.path.abspath(cwd)
+        self.save_state()
+
+    def set_engine(self, engine: str):
+        self.current_engine = "claude" if str(engine).lower() == "claude" else "agy"
         self.save_state()
 
     def get_cwd_short_name(self, cwd_path: Optional[str] = None) -> str:

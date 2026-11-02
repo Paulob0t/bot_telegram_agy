@@ -59,6 +59,8 @@ USAGE_CACHE_PATH = os.path.join(BASE_CLI_DIR, "last_token_usage.json")
 STATE_CACHE_PATH = os.path.join(BASE_CLI_DIR, "telegram_bot_state.json")
 
 AGY_BIN = os.environ.get("AGY_BIN") or shutil.which("agy") or os.path.expanduser("~/.local/bin/agy")
+CLAUDE_BIN = os.environ.get("CLAUDE_BIN") or shutil.which("claude") or os.path.expanduser("~/.local/bin/claude")
+CLAUDE_PROJECTS_DIR = os.path.expanduser("~/.claude/projects")
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",

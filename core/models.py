@@ -80,11 +80,25 @@ def get_cli_default_model() -> str:
     return "Gemini 4 Argon (Medium)"
 
 
+CLAUDE_MODELS_CATALOG: List[Dict[str, str]] = [
+    {"id": "sonnet", "name": "Claude Sonnet 4.6 (Rápido / Balanceado)", "icon": "🎯"},
+    {"id": "opus", "name": "Claude Opus 4.6 (Máxima inteligencia)", "icon": "👑"},
+    {"id": "haiku", "name": "Claude Haiku 4.5 (Ultraligero)", "icon": "⚡"},
+]
+
+
 def get_effective_model_display() -> Tuple[str, int]:
     """
     Devuelve (nombre_efectivo_del_modelo, max_context_tokens) considerando
-    tanto el override del bot como el default configurado en settings.json de AGY.
+    tanto el motor activo (Claude Code vs AGY) como el override del bot.
     """
+    if session_state.current_engine == "claude":
+        c_mod = session_state.claude_model
+        if c_mod:
+            friendly = next((m["name"] for m in CLAUDE_MODELS_CATALOG if m["id"] == c_mod), c_mod)
+            return f"🟠 {friendly} (`{c_mod}`)", 200_000
+        return "🟠 Default Claude CLI (`sonnet`)", 200_000
+
     cli_default = get_cli_default_model()
     if session_state.current_model:
         active_id = session_state.current_model
@@ -183,7 +197,33 @@ async def sync_models_from_cli(timeout: float = 15.0) -> List[Dict[str, str]]:
 
 
 def build_models_keyboard() -> Tuple[InlineKeyboardMarkup, str]:
-    """Construye el teclado inline con todos los modelos actuales (2 por fila o 1 por fila agrupado)."""
+    """Construye el teclado inline con los modelos según el motor activo (Claude Code o AGY)."""
+    if session_state.current_engine == "claude":
+        active_mod = session_state.claude_model or "DEFAULT"
+        keyboard: List[List[InlineKeyboardButton]] = []
+        def_prefix = "✅ " if active_mod == "DEFAULT" else "🔄 "
+        keyboard.append([
+            InlineKeyboardButton(f"{def_prefix}Default Claude CLI (Sonnet 4.6)", callback_data="mod:DEFAULT")
+        ])
+        for item in CLAUDE_MODELS_CATALOG:
+            mid = item["id"]
+            prefix = "✅ " if mid == active_mod else f"{item['icon']} "
+            keyboard.append([
+                InlineKeyboardButton(f"{prefix}{item['name']}", callback_data=f"mod:{mid}")
+            ])
+        keyboard.append([
+            InlineKeyboardButton("🔵 Cambiar a motor AGY", callback_data="cl_engine:agy")
+        ])
+        eff_disp, ctx_win = get_effective_model_display()
+        text = (
+            "🟠 **Modelos de Claude Code CLI**\n\n"
+            f"• 📌 **Activo:** {eff_disp}\n"
+            f"• ⚡ **Esfuerzo:** `{session_state.current_effort.upper()}`\n"
+            f"• 🪟 **Ventana de Contexto:** `{ctx_win:,}` tokens\n\n"
+            "*Toca un modelo de Claude para activarlo:*"
+        )
+        return InlineKeyboardMarkup(keyboard), text
+
     catalog = get_models_catalog()
     cli_default = get_cli_default_model()
     active_mod = session_state.current_model or "DEFAULT"
