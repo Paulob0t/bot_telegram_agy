@@ -139,11 +139,11 @@ def split_md_sections(md_path: str, max_chars: int = 3300) -> List[Tuple[str, st
         return [("Vacío", "_(Archivo vacío)_")]
 
     # Si cabe completo en una sola vista, devolver 1 sección
-    if len(raw) <= max_chars and "\n## " not in raw:
+    if len(raw) <= max_chars and not re.search(r"(?m)^###?\s+", raw):
         title = raw.splitlines()[0].lstrip("# ").strip()[:40] or "Documento"
         return [(title, raw)]
 
-    blocks = re.split(r"(?m)^(?=##\s+)", raw)
+    blocks = re.split(r"(?m)^(?=###?\s+)", raw)
     sections: List[Tuple[str, str]] = []
     for idx, blk in enumerate(blocks):
         blk = blk.strip()
@@ -455,11 +455,16 @@ def build_module_prompts_keyboard(proj_idx: int, mod_idx: int, page: int = 0, pa
     for i, (fn, _) in enumerate(slice_files):
         abs_idx = page * page_size + i
         clean = fn[:-3] if fn.endswith(".md") else fn
-        icon = "📋" if clean.upper().startswith("INDEX") else "🚀"
-        label = f"{icon} {clean[:36]}..." if len(clean) > 36 else f"{icon} {clean}"
-        keyboard.append([
-            InlineKeyboardButton(label, callback_data=f"ob_pview:{proj_idx}:{mod_idx}:{abs_idx}:0")
-        ])
+        if clean.upper().startswith("INDEX"):
+            keyboard.append([
+                InlineKeyboardButton(f"📋 Leer {clean} (0 tokens)", callback_data=f"ob_pview:{proj_idx}:{mod_idx}:{abs_idx}:0")
+            ])
+        else:
+            short_c = clean[:28] + ("..." if len(clean) > 28 else "")
+            keyboard.append([
+                InlineKeyboardButton(f"📖 {short_c}", callback_data=f"ob_pview:{proj_idx}:{mod_idx}:{abs_idx}:0"),
+                InlineKeyboardButton("🚀 Lanzar", callback_data=f"ob_pask:{proj_idx}:{mod_idx}:{abs_idx}"),
+            ])
 
     if total_pages > 1:
         nav = []
@@ -470,10 +475,14 @@ def build_module_prompts_keyboard(proj_idx: int, mod_idx: int, page: int = 0, pa
             nav.append(InlineKeyboardButton("Siguiente ▶️", callback_data=f"ob_mlist:{proj_idx}:{mod_idx}:{page + 1}"))
         keyboard.append(nav)
 
-    keyboard.append([InlineKeyboardButton("🔙 Módulos de Prompts", callback_data=f"ob_mods:{proj_idx}")])
+    keyboard.append([
+        InlineKeyboardButton("🔙 Módulos", callback_data=f"ob_mods:{proj_idx}"),
+        InlineKeyboardButton(f"📒 Notas de {proj_name}", callback_data=f"ob_notes:{proj_idx}:0"),
+    ])
     text = (
         f"🎯 **Prompts de `{proj_name} / {mod_name}`** ({total} archivos)\n"
-        "*Toca un prompt para leerlo (0 tokens) o mandarlo a ejecutar en Claude / AGY:*"
+        "• Toca **📖** para **leer el `.md` por secciones** o descargarlo (**0 tokens**).\n"
+        "• Toca **🚀 Lanzar** solo si deseas mandarlo a ejecutar en Claude / AGY."
     )
     return InlineKeyboardMarkup(keyboard), text
 
@@ -501,29 +510,77 @@ def build_prompt_reader_view(proj_idx: int, mod_idx: int, file_idx: int, sec_idx
     if total_secs > 1:
         nav = []
         if sec_idx > 0:
-            nav.append(InlineKeyboardButton("◀️ Ant.", callback_data=f"ob_pview:{proj_idx}:{mod_idx}:{file_idx}:{sec_idx - 1}"))
+            nav.append(InlineKeyboardButton("◀️ Sec. Ant.", callback_data=f"ob_pview:{proj_idx}:{mod_idx}:{file_idx}:{sec_idx - 1}"))
         nav.append(InlineKeyboardButton(f"📑 {sec_idx + 1}/{total_secs}", callback_data="res_noop"))
         if sec_idx < total_secs - 1:
-            nav.append(InlineKeyboardButton("Sig. ▶️", callback_data=f"ob_pview:{proj_idx}:{mod_idx}:{file_idx}:{sec_idx + 1}"))
+            nav.append(InlineKeyboardButton("Sec. Sig. ▶️", callback_data=f"ob_pview:{proj_idx}:{mod_idx}:{file_idx}:{sec_idx + 1}"))
         keyboard.append(nav)
 
+        sec_btns: List[InlineKeyboardButton] = []
+        for s_i, (s_t, _) in enumerate(sections[:6]):
+            mark = "📍" if s_i == sec_idx else "🔹"
+            sec_btns.append(
+                InlineKeyboardButton(f"{mark} {s_t[:16]}", callback_data=f"ob_pview:{proj_idx}:{mod_idx}:{file_idx}:{s_i}")
+            )
+            if len(sec_btns) == 2:
+                keyboard.append(sec_btns)
+                sec_btns = []
+        if sec_btns:
+            keyboard.append(sec_btns)
+
+    action_row = [
+        InlineKeyboardButton("📥 Enviar .md", callback_data=f"ob_pdoc:{proj_idx}:{mod_idx}:{file_idx}"),
+    ]
     if not fn.upper().startswith("INDEX"):
-        keyboard.append([
-            InlineKeyboardButton("🟠 Ejecutar en Claude", callback_data=f"ob_prun:cl:{proj_idx}:{mod_idx}:{file_idx}"),
-            InlineKeyboardButton("🔵 Ejecutar en AGY", callback_data=f"ob_prun:ag:{proj_idx}:{mod_idx}:{file_idx}"),
-        ])
+        action_row.append(
+            InlineKeyboardButton("🚀 Ejecutar...", callback_data=f"ob_pask:{proj_idx}:{mod_idx}:{file_idx}")
+        )
+    keyboard.append(action_row)
 
     # Navegación rápida al siguiente prompt T(X+1)
     row_bottom = [InlineKeyboardButton("🔙 Lista T01..TXX", callback_data=f"ob_mlist:{proj_idx}:{mod_idx}:0")]
     if file_idx + 1 < len(files):
         next_fn = files[file_idx + 1][0].split("-")[0]
         row_bottom.append(
-            InlineKeyboardButton(f"⏭️ Siguiente ({next_fn})", callback_data=f"ob_pview:{proj_idx}:{mod_idx}:{file_idx + 1}:0")
+            InlineKeyboardButton(f"⏭️ Leer {next_fn}", callback_data=f"ob_pview:{proj_idx}:{mod_idx}:{file_idx + 1}:0")
         )
     keyboard.append(row_bottom)
 
-    header = f"🎯 **`{proj_name}/Prompts/{mod_name}/{fn}`** *[{sec_idx + 1}/{total_secs}]*\n\n"
+    header = f"📖 **`{proj_name}/Prompts/{mod_name}/{fn}`** — *[{sec_idx + 1}/{total_secs}: {sec_title}]*\n\n"
     return InlineKeyboardMarkup(keyboard), header + sec_body, full_path
+
+
+def build_prompt_launch_confirm(proj_idx: int, mod_idx: int, file_idx: int) -> Tuple[Optional[InlineKeyboardMarkup], str]:
+    projects = list_vault_projects()
+    if not (0 <= proj_idx < len(projects)):
+        return None, "❌ Proyecto no encontrado."
+    proj_name = str(projects[proj_idx]["name"])
+    mods = list_prompt_modules(proj_name)
+    if not (0 <= mod_idx < len(mods)):
+        return None, "❌ Módulo no encontrado."
+    mod_name = mods[mod_idx][0]
+    files = list_module_prompts(proj_name, mod_name)
+    if not (0 <= file_idx < len(files)):
+        return None, "❌ Prompt no encontrado."
+    fn, _ = files[file_idx]
+    target_cwd = PROJECT_CODE_MAP.get(proj_name, session_state.current_cwd)
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🟠 Ejecutar en Claude Code", callback_data=f"ob_prun:cl:{proj_idx}:{mod_idx}:{file_idx}"),
+            InlineKeyboardButton("🔵 Ejecutar en AGY", callback_data=f"ob_prun:ag:{proj_idx}:{mod_idx}:{file_idx}"),
+        ],
+        [
+            InlineKeyboardButton("📖 Leer Prompt (0 tokens)", callback_data=f"ob_pview:{proj_idx}:{mod_idx}:{file_idx}:0"),
+            InlineKeyboardButton("🔙 Volver", callback_data=f"ob_mlist:{proj_idx}:{mod_idx}:0"),
+        ],
+    ])
+    text = (
+        f"🚀 **¿Lanzar tarea `{fn}`?**\n\n"
+        f"• 📂 **Módulo:** `{proj_name} / {mod_name}`\n"
+        f"• 💻 **Repositorio destino:** `{target_cwd}`\n\n"
+        "*Elige en qué motor deseas ejecutarla (o toca 📖 para solo leerla con 0 tokens):*"
+    )
+    return keyboard, text
 
 
 def build_pdfs_list_keyboard(proj_idx: int, page: int = 0, page_size: int = 6) -> Tuple[Optional[InlineKeyboardMarkup], str]:

@@ -49,6 +49,7 @@ from core.obsidian import (
     build_note_reader_view,
     build_notes_list_keyboard,
     build_pdfs_list_keyboard,
+    build_prompt_launch_confirm,
     build_prompt_modules_keyboard,
     build_prompt_reader_view,
     build_vault_home_keyboard,
@@ -577,6 +578,27 @@ async def _handle_obsidian_callbacks(query, data: str) -> bool:
     if data.startswith("ob_pview:"):
         _, pidx_s, midx_s, fidx_s, sidx_s = data.split(":", 4)
         markup, text, _ = build_prompt_reader_view(int(pidx_s), int(midx_s), int(fidx_s), sec_idx=int(sidx_s))
+        await safe_edit(query.message, text, reply_markup=markup)
+        return True
+
+    if data.startswith("ob_pdoc:"):
+        _, pidx_s, midx_s, fidx_s = data.split(":", 3)
+        pidx, midx, fidx = int(pidx_s), int(midx_s), int(fidx_s)
+        projects = list_vault_projects()
+        if 0 <= pidx < len(projects):
+            proj_name = str(projects[pidx]["name"])
+            mods = list_prompt_modules(proj_name)
+            if 0 <= midx < len(mods):
+                files = list_module_prompts(proj_name, mods[midx][0])
+                if 0 <= fidx < len(files):
+                    fn, full = files[fidx]
+                    with open(full, "rb") as f:
+                        await query.message.reply_document(document=f, filename=fn, caption=f"📖 `{fn}`")
+        return True
+
+    if data.startswith("ob_pask:"):
+        _, pidx_s, midx_s, fidx_s = data.split(":", 3)
+        markup, text = build_prompt_launch_confirm(int(pidx_s), int(midx_s), int(fidx_s))
         await safe_edit(query.message, text, reply_markup=markup)
         return True
 
