@@ -32,6 +32,13 @@ from core.claude_chats import (
     list_claude_projects,
     get_claude_slug_for_cwd,
 )
+from core.obsidian import (
+    build_vault_home_keyboard,
+    build_vault_project_keyboard,
+    build_prompt_modules_keyboard,
+    list_vault_projects,
+    search_vault,
+)
 from core.executor import execution_manager
 from core.chat_guard import chat_guard
 
@@ -52,7 +59,9 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• ⚡ `/cd <nombre>` - Cambiar directo (ej. `/cd wicode-back`, `/cd ~`)\n\n"
         "🖥️ **Control Remoto de PC & Escritorio:**\n"
         "• 📸 `/screen` o `/ss` - Captura de pantalla en vivo de tu laptop (Wayland)\n\n"
-        "🛠️ **Comandos de AGY & Claude:**\n"
+        "🛠️ **Comandos de AGY, Claude & Obsidian:**\n"
+        "• 🟣 `/obsidian` o `/notas` - Explorar bóveda `.md`, checklists y PDFs (0 tokens)\n"
+        "• 🎯 `/prompts` - Ver o lanzar prompts técnicos `T01..TXX` en 1 toque\n"
         "• 🟠 `/claude` - Proyectos y sesiones de Claude Code (ej. Stover)\n"
         "• 🔵 `/agy` - Volver a motor Antigravity (AGY)\n"
         "• 📊 `/usage` o `/tokens` - Ver capacidad y consumo de tokens\n"
@@ -202,6 +211,38 @@ async def cmd_agy(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• 💬 **Chat AGY:** `{session_state.current_conversation_title}`\n"
         f"• 📂 **Proyecto (`cwd`):** `{session_state.get_cwd_short_name()}`",
     )
+
+
+async def cmd_obsidian(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Abre el explorador nativo de la bóveda Obsidian (0 tokens) o busca texto."""
+    if not is_authorized(update):
+        return
+    if context.args and len(context.args) > 0:
+        query = " ".join(context.args).strip()
+        markup, text = search_vault(query)
+        await safe_reply(update.message, text, reply_markup=markup)
+        return
+    markup, text = build_vault_home_keyboard()
+    await safe_reply(update.message, text, reply_markup=markup)
+
+
+async def cmd_prompts(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Abre directo los módulos de Prompts Técnicos (T01..TXX) del proyecto actual o de la bóveda."""
+    if not is_authorized(update):
+        return
+    projects = list_vault_projects()
+    cwd_base = os.path.basename(session_state.current_cwd.rstrip("/")).lower()
+    matched_idx = next(
+        (i for i, p in enumerate(projects) if str(p["name"]).lower() == cwd_base),
+        None,
+    )
+    if matched_idx is not None:
+        markup, text = build_prompt_modules_keyboard(matched_idx)
+        if markup:
+            await safe_reply(update.message, text, reply_markup=markup)
+            return
+    markup, text = build_vault_home_keyboard()
+    await safe_reply(update.message, text, reply_markup=markup)
 
 
 async def cmd_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):

@@ -42,6 +42,7 @@ if not TOKEN or not AUTHORIZED_USER_ID:
 
 HOME_DIR = os.environ.get("BOT_HOME_DIR", os.path.expanduser("~"))
 PROJECTS_BASE_DIR = os.environ.get("BOT_PROJECTS_DIR", "/run/media/paulobot/Datos/Projects")
+OBSIDIAN_VAULT_DIR = os.environ.get("BOT_OBSIDIAN_DIR", "/run/media/paulobot/Datos/Documents/wicode")
 
 # Mensajes largos: Telegram parte textos > 4096 chars en varios mensajes.
 # Si un mensaje supera LONG_MESSAGE_THRESHOLD, se espera LONG_MESSAGE_WAIT_SECONDS

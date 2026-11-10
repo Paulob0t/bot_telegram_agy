@@ -20,6 +20,8 @@ from core.handlers.commands import (
     cmd_resume,
     cmd_claude,
     cmd_agy,
+    cmd_obsidian,
+    cmd_prompts,
     cmd_delete,
     cmd_model,
     cmd_effort,
@@ -55,6 +57,8 @@ async def post_init(application: Application) -> None:
     """Sincroniza el menú de comandos de Telegram al iniciar el bot."""
     commands = [
         BotCommand("start", "Panel principal y ayuda"),
+        BotCommand("obsidian", "Explorar bóveda Obsidian .md y PDFs (0 tokens)"),
+        BotCommand("prompts", "Ver y lanzar prompts técnicos T01..TXX"),
         BotCommand("claude", "Proyectos y chats de Claude Code"),
         BotCommand("agy", "Cambiar motor a Antigravity (AGY)"),
         BotCommand("project", "Cambiar proyecto o repositorio (cwd)"),
@@ -102,8 +106,10 @@ def main():
         CommandHandler(["screen", "ss", "screenshot", "captura", "pantalla"], cmd_screen)
     )
 
-    # Comandos Generales de AGY
+    # Comandos Generales de AGY & Obsidian
     application.add_handler(CommandHandler(["start", "help", "ayuda"], cmd_start))
+    application.add_handler(CommandHandler(["obsidian", "vault", "notas", "boveda"], cmd_obsidian))
+    application.add_handler(CommandHandler(["prompts", "tareas"], cmd_prompts))
     application.add_handler(CommandHandler(["claude"], cmd_claude))
     application.add_handler(CommandHandler(["agy"], cmd_agy))
     application.add_handler(CommandHandler(["usage", "tokens", "consumo"], cmd_usage))
@@ -122,8 +128,10 @@ def main():
     # Callbacks interactivos
     application.add_handler(CallbackQueryHandler(handle_callback_query))
 
-    # Mensajes de texto normales y fotos
-    application.add_handler(MessageHandler((filters.TEXT | filters.PHOTO) & ~filters.COMMAND, handle_message))
+    # Mensajes de texto, fotos y documentos (.pdf, .md, etc.)
+    application.add_handler(
+        MessageHandler((filters.TEXT | filters.PHOTO | filters.Document.ALL) & ~filters.COMMAND, handle_message)
+    )
 
     print("Bot listo y a la escucha (Modular + Proyectos + Cola Concurrente).")
     application.run_polling()

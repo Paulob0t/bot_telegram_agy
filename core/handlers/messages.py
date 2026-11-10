@@ -10,6 +10,7 @@ from core.utils import is_authorized, safe_reply
 from core.executor import execution_manager
 from core.message_buffer import long_message_buffer
 from core.chat_guard import chat_guard
+from core.obsidian import register_pending_pdf
 
 
 async def chat_guard_submit(prompt: str, message_obj, temp_files=None):
@@ -24,6 +25,32 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     caption_prompt = (update.message.caption or "").strip()
     prompt = text_prompt or caption_prompt
     temp_files = []
+
+    if update.message.document:
+        doc = update.message.document
+        fn = doc.file_name or f"documento_{doc.file_unique_id}"
+        ext = os.path.splitext(fn)[1].lower()
+        if ext == ".pdf" or doc.mime_type == "application/pdf":
+            try:
+                file = await doc.get_file()
+                safe_name = os.path.basename(fn).replace(" ", "_")
+                tmp_pdf = os.path.join(tempfile.gettempdir(), f"tg_pdf_{doc.file_unique_id}_{safe_name}")
+                await file.download_to_drive(tmp_pdf)
+                _, markup, text = register_pending_pdf(tmp_pdf, safe_name)
+                await safe_reply(update.message, text, reply_markup=markup)
+            except Exception as e:
+                await safe_reply(update.message, f"⚠️ Error descargando el PDF: `{e}`")
+            return
+        elif ext in (".md", ".txt", ".json", ".sql", ".ts", ".py", ".tsx"):
+            try:
+                file = await doc.get_file()
+                tmp_doc = os.path.join(tempfile.gettempdir(), f"tg_doc_{doc.file_unique_id}_{os.path.basename(fn)}")
+                await file.download_to_drive(tmp_doc)
+                temp_files.append(tmp_doc)
+                prompt = f"[Archivo adjunto: {tmp_doc}]\n\n{prompt or 'Revisa este archivo.'}"
+            except Exception as e:
+                await safe_reply(update.message, f"⚠️ Error descargando archivo: `{e}`")
+                return
 
     if update.message.photo:
         try:

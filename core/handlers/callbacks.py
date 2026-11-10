@@ -42,6 +42,26 @@ from core.projects import (
     format_active_cwd_summary,
     list_available_projects,
 )
+from core.obsidian import (
+    PROJECT_CODE_MAP,
+    build_module_prompts_keyboard,
+    build_note_checklist_view,
+    build_note_reader_view,
+    build_notes_list_keyboard,
+    build_pdfs_list_keyboard,
+    build_prompt_modules_keyboard,
+    build_prompt_reader_view,
+    build_vault_home_keyboard,
+    build_vault_project_keyboard,
+    build_wicode_generator_prompt,
+    list_module_prompts,
+    list_project_notes,
+    list_project_pdfs,
+    list_prompt_modules,
+    list_vault_projects,
+    pop_pending_pdf,
+    toggle_checklist_line,
+)
 from core.state import session_state
 from core.utils import is_authorized, safe_edit, safe_reply
 
@@ -484,6 +504,206 @@ async def _handle_queue_and_screen_callbacks(query, data: str) -> bool:
     return False
 
 
+async def _handle_obsidian_callbacks(query, data: str) -> bool:
+    if not data.startswith("ob_"):
+        return False
+
+    if data == "ob_home":
+        markup, text = build_vault_home_keyboard()
+        await safe_edit(query.message, text, reply_markup=markup)
+        return True
+
+    if data.startswith("ob_proj:"):
+        pidx = int(data.split(":", 1)[1])
+        markup, text = build_vault_project_keyboard(pidx)
+        await safe_edit(query.message, text, reply_markup=markup)
+        return True
+
+    if data.startswith("ob_notes:"):
+        _, pidx_s, page_s = data.split(":", 2)
+        markup, text = build_notes_list_keyboard(int(pidx_s), page=int(page_s))
+        await safe_edit(query.message, text, reply_markup=markup)
+        return True
+
+    if data.startswith("ob_nview:"):
+        _, pidx_s, nidx_s, sidx_s = data.split(":", 3)
+        markup, text, _ = build_note_reader_view(int(pidx_s), int(nidx_s), sec_idx=int(sidx_s))
+        await safe_edit(query.message, text, reply_markup=markup)
+        return True
+
+    if data.startswith("ob_ndoc:"):
+        _, pidx_s, nidx_s = data.split(":", 2)
+        projects = list_vault_projects()
+        pidx = int(pidx_s)
+        if 0 <= pidx < len(projects):
+            notes = list_project_notes(str(projects[pidx]["name"]))
+            nidx = int(nidx_s)
+            if 0 <= nidx < len(notes):
+                fn, full = notes[nidx]
+                with open(full, "rb") as f:
+                    await query.message.reply_document(document=f, filename=fn, caption=f"📒 `{fn}`")
+        return True
+
+    if data.startswith("ob_nchk:"):
+        _, pidx_s, nidx_s, page_s = data.split(":", 3)
+        markup, text = build_note_checklist_view(int(pidx_s), int(nidx_s), page=int(page_s))
+        await safe_edit(query.message, text, reply_markup=markup)
+        return True
+
+    if data.startswith("ob_ntog:"):
+        _, pidx_s, nidx_s, line_s, page_s = data.split(":", 4)
+        pidx, nidx, line_i, page_i = int(pidx_s), int(nidx_s), int(line_s), int(page_s)
+        projects = list_vault_projects()
+        if 0 <= pidx < len(projects):
+            notes = list_project_notes(str(projects[pidx]["name"]))
+            if 0 <= nidx < len(notes):
+                toggle_checklist_line(notes[nidx][1], line_i)
+        markup, text = build_note_checklist_view(pidx, nidx, page=page_i)
+        await safe_edit(query.message, text, reply_markup=markup)
+        return True
+
+    if data.startswith("ob_mods:"):
+        pidx = int(data.split(":", 1)[1])
+        markup, text = build_prompt_modules_keyboard(pidx)
+        await safe_edit(query.message, text, reply_markup=markup)
+        return True
+
+    if data.startswith("ob_mlist:"):
+        _, pidx_s, midx_s, page_s = data.split(":", 3)
+        markup, text = build_module_prompts_keyboard(int(pidx_s), int(midx_s), page=int(page_s))
+        await safe_edit(query.message, text, reply_markup=markup)
+        return True
+
+    if data.startswith("ob_pview:"):
+        _, pidx_s, midx_s, fidx_s, sidx_s = data.split(":", 4)
+        markup, text, _ = build_prompt_reader_view(int(pidx_s), int(midx_s), int(fidx_s), sec_idx=int(sidx_s))
+        await safe_edit(query.message, text, reply_markup=markup)
+        return True
+
+    if data.startswith("ob_prun:"):
+        _, eng, pidx_s, midx_s, fidx_s = data.split(":", 4)
+        pidx, midx, fidx = int(pidx_s), int(midx_s), int(fidx_s)
+        projects = list_vault_projects()
+        if not (0 <= pidx < len(projects)):
+            return True
+        proj_name = str(projects[pidx]["name"])
+        mods = list_prompt_modules(proj_name)
+        if not (0 <= midx < len(mods)):
+            return True
+        mod_name = mods[midx][0]
+        files = list_module_prompts(proj_name, mod_name)
+        if not (0 <= fidx < len(files)):
+            return True
+
+        fn, full_path = files[fidx]
+        with open(full_path, "r", encoding="utf-8", errors="replace") as f:
+            prompt_text = f.read().strip()
+
+        target_cwd = PROJECT_CODE_MAP.get(proj_name, session_state.current_cwd)
+        if os.path.isdir(target_cwd):
+            session_state.set_cwd(target_cwd)
+
+        if eng == "cl":
+            session_state.set_engine("claude")
+            eng_label = "🟠 Claude Code"
+        else:
+            session_state.set_engine("agy")
+            eng_label = "🔵 Antigravity (AGY)"
+
+        chat_guard.touch()
+        await safe_edit(
+            query.message,
+            f"🚀 **Lanzando Prompt `{fn}` en {eng_label}**\n"
+            f"📂 **Proyecto (`cwd`):** `{session_state.get_cwd_short_name()}`",
+        )
+        await execution_manager.submit(prompt_text, query.message)
+        return True
+
+    if data.startswith("ob_pdfs:"):
+        _, pidx_s, page_s = data.split(":", 2)
+        markup, text = build_pdfs_list_keyboard(int(pidx_s), page=int(page_s))
+        await safe_edit(query.message, text, reply_markup=markup)
+        return True
+
+    if data.startswith("ob_pdf_dl:"):
+        _, pidx_s, fidx_s = data.split(":", 2)
+        pidx, fidx = int(pidx_s), int(fidx_s)
+        projects = list_vault_projects()
+        if 0 <= pidx < len(projects):
+            pdfs = list_project_pdfs(str(projects[pidx]["name"]))
+            if 0 <= fidx < len(pdfs):
+                fn, full = pdfs[fidx]
+                with open(full, "rb") as f:
+                    await query.message.reply_document(document=f, filename=fn, caption=f"📄 `{fn}`")
+        return True
+
+    if data.startswith("ob_pdf_gen:"):
+        _, pidx_s, fidx_s = data.split(":", 2)
+        pidx, fidx = int(pidx_s), int(fidx_s)
+        projects = list_vault_projects()
+        if 0 <= pidx < len(projects):
+            proj_name = str(projects[pidx]["name"])
+            pdfs = list_project_pdfs(proj_name)
+            if 0 <= fidx < len(pdfs):
+                fn, full = pdfs[fidx]
+                prompt_text, target_cwd = build_wicode_generator_prompt(proj_name, full)
+                session_state.set_cwd(target_cwd)
+                chat_guard.touch()
+                await safe_edit(
+                    query.message,
+                    f"⚡ **Ejecutando `wicode-prompt-generator` para `{fn}`**\n"
+                    f"📂 **Proyecto:** `{proj_name}`",
+                )
+                await execution_manager.submit(prompt_text, query.message)
+        return True
+
+    if data.startswith("ob_pdf_up:"):
+        import shutil
+        _, hold_id, pidx_s, action = data.split(":", 3)
+        info = pop_pending_pdf(hold_id)
+        if not info:
+            await safe_edit(query.message, "⌛ Este archivo temporal ya expiró. Reenvía el PDF.")
+            return True
+        tmp_path = str(info["tmp_path"])
+        filename = str(info["filename"])
+        if action == "drop":
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+            await safe_edit(query.message, f"🗑️ PDF `{filename}` descartado.")
+            return True
+
+        projects = list_vault_projects()
+        pidx = int(pidx_s)
+        if not (0 <= pidx < len(projects)):
+            await safe_edit(query.message, "❌ Proyecto destino no válido.")
+            return True
+        proj_name = str(projects[pidx]["name"])
+        dest_dir = os.path.join(str(projects[pidx]["path"]), "PDF")
+        os.makedirs(dest_dir, exist_ok=True)
+        dest_path = os.path.join(dest_dir, filename)
+        shutil.move(tmp_path, dest_path)
+
+        if action == "save":
+            await safe_edit(
+                query.message,
+                f"✅ **PDF guardado en Obsidian (0 tokens):**\n`{dest_path}`",
+            )
+            return True
+
+        prompt_text, target_cwd = build_wicode_generator_prompt(proj_name, dest_path)
+        session_state.set_cwd(target_cwd)
+        chat_guard.touch()
+        await safe_edit(
+            query.message,
+            f"⚡ **PDF guardado en `{proj_name}/PDF/{filename}`.**\n"
+            f"🚀 *Iniciando `wicode-prompt-generator` (Fase 1 Nota Markdown + Fase 2 Prompts T01..TXX)...*",
+        )
+        await execution_manager.submit(prompt_text, query.message)
+        return True
+
+    return False
+
+
 async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if not query or not is_authorized(update):
@@ -495,6 +715,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     for handler in (
+        _handle_obsidian_callbacks,
         _handle_claude_callbacks,
         _handle_chat_guard_callbacks,
         _handle_project_callbacks,
