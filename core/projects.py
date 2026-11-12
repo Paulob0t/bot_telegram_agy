@@ -121,7 +121,7 @@ def resolve_project_Target(query_str: str) -> Tuple[Optional[str], List[Tuple[st
         return HOME_DIR, []
 
     # Si es una ruta absoluta o empieza con ~ / .
-    if q.startswith("/") or q.startswith("~"):
+    if q.startswith("/") or q.startswith("~") or (len(q) >= 2 and q[1] == ":"):
         expanded = os.path.abspath(os.path.expanduser(q))
         if os.path.isdir(expanded):
             return expanded, []

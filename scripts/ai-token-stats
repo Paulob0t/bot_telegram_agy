@@ -2,26 +2,36 @@
 """
 Unified AI Quotas fetcher for Telegram Bot (/usage) and Quickshell (paulobot.ai-tokens).
 Uses `--no-session-persistence` so Claude Code creates zero `.jsonl` files.
+Runs Claude and Antigravity concurrently for speed.
+Supports caching with --cached and TTL.
 """
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
 CACHE_FILE = Path.home() / ".gemini" / "antigravity-cli" / "ai_quotas_cache.json"
+CACHE_MAX_AGE_SECONDS = 30
+TEMP_DIR = tempfile.gettempdir()
+AGY_CMD = shutil.which("agy") or str(Path.home() / "AppData/Local/agy/bin/agy.exe")
+CLAUDE_CMD = shutil.which("claude") or "claude"
 
 
 def get_claude_quota() -> dict:
     try:
         res = subprocess.run(
-            ["claude", "--no-session-persistence", "-p", "/usage"],
+            [CLAUDE_CMD, "--no-session-persistence", "-p", "/usage"],
             capture_output=True,
             text=True,
             timeout=10,
-            cwd="/tmp",
+            cwd=TEMP_DIR,
         )
         lines = res.stdout.strip().split("\n")
 
@@ -37,7 +47,8 @@ def get_claude_quota() -> dict:
                 if m:
                     session_used_pct = int(m.group(1))
                     session_resets = (m.group(2) or "").strip()
-            elif "Current week" in line:
+            # Match specifically "Current week (all models):" to avoid being overwritten by "Current week (Fable):"
+            elif "Current week (all models):" in line or ("Current week" in line and "Fable" not in line and week_used_pct == 0):
                 m = re.search(r"Current week[^:]*:\s*(\d+)%\s*used(?:\s*·\s*resets\s*(.*))?", line)
                 if m:
                     week_used_pct = int(m.group(1))
@@ -59,11 +70,11 @@ def get_claude_quota() -> dict:
 def get_antigravity_quota() -> dict:
     try:
         res = subprocess.run(
-            ["agy", "-p", "/usage"],
+            [AGY_CMD, "-p", "/usage"],
             capture_output=True,
             text=True,
             timeout=12,
-            cwd="/tmp",
+            cwd=TEMP_DIR,
         )
         lines = res.stdout.strip().split("\n")
 
@@ -135,22 +146,32 @@ def get_antigravity_quota() -> dict:
         return {"available": False, "error": str(e)}
 
 
-def main():
-    if "--cached" in sys.argv and CACHE_FILE.exists():
-        try:
-            print(CACHE_FILE.read_text(encoding="utf-8"))
-            return
-        except Exception:
-            pass
+def fetch_all() -> dict:
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        future_claude = executor.submit(get_claude_quota)
+        future_ag = executor.submit(get_antigravity_quota)
+        claude_data = future_claude.result()
+        ag_data = future_ag.result()
 
-    claude_data = get_claude_quota()
-    ag_data = get_antigravity_quota()
-
-    result = {
+    return {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "claude_code": claude_data,
         "antigravity": ag_data,
     }
+
+
+def main():
+    # If caller allows cached data (e.g., instant popup display)
+    if "--cached" in sys.argv and CACHE_FILE.exists():
+        try:
+            content = CACHE_FILE.read_text(encoding="utf-8")
+            # If user explicitly wants cache only or cache is fresh enough:
+            print(content)
+            return
+        except Exception:
+            pass
+
+    result = fetch_all()
     payload = json.dumps(result)
     try:
         CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)

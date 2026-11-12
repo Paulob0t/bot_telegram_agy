@@ -16,7 +16,11 @@ TELEGRAM_BODY_MAX = 3500
 
 
 def load_env():
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env_file = os.environ.get("BOT_ENV_FILE", ".env")
     for p in (
+        os.path.join(repo_root, env_file),
+        os.path.join(repo_root, ".env"),
         "/run/media/paulobot/Datos/Projects/telegram-paulobot/.env",
         os.path.expanduser("~/.config/telegram-bot/.env"),
     ):

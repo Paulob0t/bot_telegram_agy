@@ -8,7 +8,7 @@ import traceback
 from dataclasses import dataclass, field
 from typing import Optional, List, Any
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from core.config import AGY_BIN, CLAUDE_BIN, HOME_DIR, logger
+from core.config import AGY_BIN, CLAUDE_BIN, HOME_DIR, IS_WINDOWS, logger
 from core.state import session_state
 from core.utils import (
     safe_reply,
@@ -84,30 +84,44 @@ class AGYExecutionManager:
 
         self.was_cancelled = True
         pid = proc.pid
-        try:
-            pgid = os.getpgid(pid)
-            os.killpg(pgid, signal.SIGTERM)
-        except Exception:
+        if IS_WINDOWS:
             try:
-                proc.terminate()
-            except Exception:
-                pass
-
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=1.5)
-        except asyncio.TimeoutError:
-            try:
-                pgid = os.getpgid(pid)
-                os.killpg(pgid, signal.SIGKILL)
+                kill_proc = await asyncio.create_subprocess_exec(
+                    "taskkill", "/F", "/T", "/PID", str(pid),
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                await asyncio.wait_for(kill_proc.wait(), timeout=3.0)
             except Exception:
                 try:
                     proc.kill()
                 except Exception:
                     pass
+        else:
             try:
-                await asyncio.wait_for(proc.wait(), timeout=1.0)
+                pgid = os.getpgid(pid)
+                os.killpg(pgid, signal.SIGTERM)
             except Exception:
-                pass
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=1.5)
+            except asyncio.TimeoutError:
+                try:
+                    pgid = os.getpgid(pid)
+                    os.killpg(pgid, signal.SIGKILL)
+                except Exception:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=1.0)
+                except Exception:
+                    pass
 
         logger.info(f"Proceso AGY (PID {pid}) y subprocesos terminados limpiamente.")
         return True
@@ -360,19 +374,32 @@ class AGYExecutionManager:
             status_msg = await safe_reply(job.message_obj, header_text, reply_markup=cancel_markup)
 
         env = os.environ.copy()
-        env["PATH"] = f"/home/paulobot/.local/bin:/home/paulobot/.gemini/antigravity-cli/bin:{env.get('PATH', '')}"
+        if IS_WINDOWS:
+            extra_dirs = [
+                os.path.expanduser(r"~\AppData\Local\agy\bin"),
+                os.path.expanduser(r"~\AppData\Roaming\npm"),
+                os.path.expanduser(r"~\.local\bin"),
+            ]
+        else:
+            extra_dirs = [
+                os.path.expanduser("~/.local/bin"),
+                os.path.expanduser("~/.gemini/antigravity-cli/bin"),
+            ]
+        env["PATH"] = os.pathsep.join(extra_dirs + [env.get("PATH", "")])
         env["AGY_FROM_TELEGRAM"] = "1"
         env["CLAUDE_FROM_TELEGRAM"] = "1"
 
         try:
+            proc_kwargs = {"limit": 10 * 1024 * 1024}
+            if not IS_WINDOWS:
+                proc_kwargs["start_new_session"] = True
             proc = await asyncio.create_subprocess_exec(
                 *command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 cwd=exec_cwd,
                 env=env,
-                start_new_session=True,
-                limit=10 * 1024 * 1024,
+                **proc_kwargs,
             )
             self.active_process = proc
 

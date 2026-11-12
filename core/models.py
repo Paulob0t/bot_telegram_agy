@@ -1,15 +1,21 @@
 import os
 import re
+import sys
 import json
 import time
 import asyncio
 from datetime import datetime
 from typing import List, Tuple, Optional, Dict
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from core.config import AGY_BIN, BASE_CLI_DIR, logger
+from core.config import AGY_BIN, BASE_CLI_DIR, IS_WINDOWS, PROJECT_ROOT, logger
 from core.state import session_state
 
-AI_TOKEN_STATS_BIN = "/home/paulobot/.local/bin/ai-token-stats"
+AI_TOKEN_STATS_SCRIPT = os.path.join(PROJECT_ROOT, "scripts", "ai-token-stats")
+AI_TOKEN_STATS_BIN = (
+    AI_TOKEN_STATS_SCRIPT
+    if os.path.isfile(AI_TOKEN_STATS_SCRIPT)
+    else os.path.expanduser("~/.local/bin/ai-token-stats")
+)
 
 MODELS_CACHE_PATH = os.path.join(BASE_CLI_DIR, "telegram_models_cache.json")
 AGY_SETTINGS_PATH = os.path.join(BASE_CLI_DIR, "settings.json")
@@ -130,7 +136,11 @@ async def sync_models_from_cli(timeout: float = 15.0) -> List[Dict[str, str]]:
     disponibles y actualiza la caché local en disco.
     """
     env = os.environ.copy()
-    env["PATH"] = f"/home/paulobot/.local/bin:/home/paulobot/.gemini/antigravity-cli/bin:{env.get('PATH', '')}"
+    if IS_WINDOWS:
+        extra_dirs = [os.path.expanduser(r"~\AppData\Local\agy\bin"), os.path.expanduser(r"~\.local\bin")]
+    else:
+        extra_dirs = [os.path.expanduser("~/.local/bin"), os.path.expanduser("~/.gemini/antigravity-cli/bin")]
+    env["PATH"] = os.pathsep.join(extra_dirs + [env.get("PATH", "")])
 
     proc = await asyncio.create_subprocess_exec(
         AGY_BIN,
@@ -312,12 +322,17 @@ async def build_ai_quotas_dashboard() -> Tuple[InlineKeyboardMarkup, str]:
     Quickshell `paulobot.ai-tokens`) y construye el panel de cuotas de Claude Code y Antigravity.
     """
     env = os.environ.copy()
-    env["PATH"] = f"/home/paulobot/.local/bin:/home/paulobot/.gemini/antigravity-cli/bin:{env.get('PATH', '')}"
+    if IS_WINDOWS:
+        extra_dirs = [os.path.expanduser(r"~\AppData\Local\agy\bin"), os.path.expanduser(r"~\.local\bin")]
+    else:
+        extra_dirs = [os.path.expanduser("~/.local/bin"), os.path.expanduser("~/.gemini/antigravity-cli/bin")]
+    env["PATH"] = os.pathsep.join(extra_dirs + [env.get("PATH", "")])
 
     data = {}
     try:
+        cmd = [sys.executable, AI_TOKEN_STATS_BIN] if IS_WINDOWS else [AI_TOKEN_STATS_BIN]
         proc = await asyncio.create_subprocess_exec(
-            AI_TOKEN_STATS_BIN,
+            *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
             env=env,

@@ -1,12 +1,33 @@
 import os
 import json
 import time
+import shutil
 import sqlite3
 import tempfile
-from typing import Optional
-from core.config import HOME_DIR, DB_PATH, USAGE_CACHE_PATH, STATE_CACHE_PATH, logger
+from typing import Dict, Optional
+from core.config import (
+    CLAUDE_BIN,
+    DB_PATH,
+    HOME_DIR,
+    OBSIDIAN_VAULT_DIR,
+    STATE_CACHE_PATH,
+    USAGE_CACHE_PATH,
+    logger,
+)
 
 VALID_EFFORTS = ("low", "medium", "high", "xhigh", "max")
+FEATURE_KEYS = ("obsidian", "claude", "screen", "chat_guard")
+
+
+def _default_features() -> Dict[str, bool]:
+    has_obsidian = os.path.isdir(OBSIDIAN_VAULT_DIR)
+    has_claude = bool(shutil.which(CLAUDE_BIN) or os.path.isfile(CLAUDE_BIN))
+    return {
+        "obsidian": has_obsidian,
+        "claude": has_claude,
+        "screen": True,
+        "chat_guard": True,
+    }
 
 
 class BotSessionState:
@@ -25,6 +46,7 @@ class BotSessionState:
         self.current_model: Optional[str] = None  # None = por defecto o ID específico
         self.current_effort: str = "low"  # low, medium, high, xhigh, max
         self.current_cwd: str = HOME_DIR  # Directorio de trabajo activo para AGY
+        self.features: Dict[str, bool] = _default_features()
         self.updated_at: Optional[float] = None
         self.last_usage_data: dict = {}
 
@@ -88,7 +110,21 @@ class BotSessionState:
             c_mod = data.get("claude_model", None)
             self.claude_model = str(c_mod).strip() if c_mod else None
 
-            # 5. Restaurar conversación activa de AGY y sincronizar título con SQLite
+            # 5. Restaurar módulos / features habilitados
+            saved_features = data.get("features")
+            defaults = _default_features()
+            if isinstance(saved_features, dict):
+                self.features = {
+                    k: bool(saved_features.get(k, defaults[k]))
+                    for k in FEATURE_KEYS
+                }
+            else:
+                self.features = defaults
+
+            if not self.features.get("claude", True) and self.current_engine == "claude":
+                self.current_engine = "agy"
+
+            # 6. Restaurar conversación activa de AGY y sincronizar título con SQLite
             saved_conv_id = data.get("current_conversation_id", None)
             if saved_conv_id in (None, "LATEST"):
                 self.current_conversation_id = None
@@ -131,6 +167,7 @@ class BotSessionState:
                 "current_model": self.current_model,
                 "current_effort": self.current_effort,
                 "current_cwd": self.current_cwd,
+                "features": self.features,
                 "updated_at": self.updated_at,
             }
             fd, tmp_path = tempfile.mkstemp(dir=state_dir, prefix=".bot_state_", suffix=".tmp")
@@ -225,11 +262,24 @@ class BotSessionState:
         self.current_engine = "claude" if str(engine).lower() == "claude" else "agy"
         self.save_state()
 
+    def is_feature_enabled(self, key: str) -> bool:
+        return bool(self.features.get(key, True))
+
+    def toggle_feature(self, key: str) -> bool:
+        if key not in FEATURE_KEYS:
+            return False
+        new_val = not self.features.get(key, True)
+        self.features[key] = new_val
+        if key == "claude" and not new_val and self.current_engine == "claude":
+            self.current_engine = "agy"
+        self.save_state()
+        return new_val
+
     def get_cwd_short_name(self, cwd_path: Optional[str] = None) -> str:
         target = cwd_path or self.current_cwd
         if os.path.abspath(target) == os.path.abspath(HOME_DIR):
-            return "~ (/home/paulobot)"
-        return os.path.basename(target.rstrip("/")) or target
+            return f"~ ({HOME_DIR})"
+        return os.path.basename(target.rstrip("/\\")) or target
 
 
 session_state = BotSessionState()

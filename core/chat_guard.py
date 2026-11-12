@@ -42,6 +42,8 @@ class ChatGuard:
         self.last_prompt_at = time.time()
 
     def needs_confirmation(self) -> bool:
+        if not session_state.is_feature_enabled("chat_guard"):
+            return False
         if self.idle_seconds <= 0:
             return False
         is_claude = session_state.current_engine == "claude"

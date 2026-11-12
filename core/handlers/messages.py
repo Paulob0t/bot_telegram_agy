@@ -11,6 +11,7 @@ from core.executor import execution_manager
 from core.message_buffer import long_message_buffer
 from core.chat_guard import chat_guard
 from core.obsidian import register_pending_pdf
+from core.state import session_state
 
 
 async def chat_guard_submit(prompt: str, message_obj, temp_files=None):
@@ -30,7 +31,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         doc = update.message.document
         fn = doc.file_name or f"documento_{doc.file_unique_id}"
         ext = os.path.splitext(fn)[1].lower()
-        if ext == ".pdf" or doc.mime_type == "application/pdf":
+        if (ext == ".pdf" or doc.mime_type == "application/pdf") and session_state.is_feature_enabled("obsidian"):
             try:
                 file = await doc.get_file()
                 safe_name = os.path.basename(fn).replace(" ", "_")
@@ -41,7 +42,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 await safe_reply(update.message, f"⚠️ Error descargando el PDF: `{e}`")
             return
-        elif ext in (".md", ".txt", ".json", ".sql", ".ts", ".py", ".tsx"):
+        elif ext in (".pdf", ".md", ".txt", ".json", ".sql", ".ts", ".py", ".tsx"):
             try:
                 file = await doc.get_file()
                 tmp_doc = os.path.join(tempfile.gettempdir(), f"tg_doc_{doc.file_unique_id}_{os.path.basename(fn)}")

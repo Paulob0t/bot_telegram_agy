@@ -1,16 +1,20 @@
 import os
+import sys
 import shutil
 import logging
 
+IS_WINDOWS = sys.platform == "win32"
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ENV_FILE_NAME = os.environ.get("BOT_ENV_FILE", ".env")
 ENV_CANDIDATES = [
+    os.path.join(PROJECT_ROOT, ENV_FILE_NAME),
     os.path.join(PROJECT_ROOT, ".env"),
     os.path.expanduser("~/.config/telegram-bot/.env"),
 ]
 
 
 def load_dotenv_files():
-    """Carga variables de entorno desde el archivo .env (permisos 600) sin dependencias externas."""
+    """Carga variables de entorno desde el archivo .env sin dependencias externas."""
     for env_path in ENV_CANDIDATES:
         if os.path.isfile(env_path):
             try:
@@ -25,7 +29,6 @@ def load_dotenv_files():
                         if key and key not in os.environ:
                             os.environ[key] = val
             except Exception as exc:
-                # logger aún no existe aquí; usar logging raíz
                 logging.warning("No se pudo leer %s: %s", env_path, exc)
 
 
@@ -37,21 +40,17 @@ AUTHORIZED_USER_ID = int(os.environ.get("TELEGRAM_AUTHORIZED_USER_ID", "0") or "
 if not TOKEN or not AUTHORIZED_USER_ID:
     raise RuntimeError(
         "Faltan credenciales TELEGRAM_BOT_TOKEN o TELEGRAM_AUTHORIZED_USER_ID. "
-        "Configúralas en el archivo .env (chmod 600)."
+        "Configúralas en el archivo .env."
     )
 
 HOME_DIR = os.environ.get("BOT_HOME_DIR", os.path.expanduser("~"))
-PROJECTS_BASE_DIR = os.environ.get("BOT_PROJECTS_DIR", "/run/media/paulobot/Datos/Projects")
-OBSIDIAN_VAULT_DIR = os.environ.get("BOT_OBSIDIAN_DIR", "/run/media/paulobot/Datos/Documents/wicode")
+_default_projects = r"C:\Proyectos" if IS_WINDOWS else "/run/media/paulobot/Datos/Projects"
+_default_obsidian = os.path.join(HOME_DIR, "Documents", "wicode") if IS_WINDOWS else "/run/media/paulobot/Datos/Documents/wicode"
+PROJECTS_BASE_DIR = os.environ.get("BOT_PROJECTS_DIR", _default_projects)
+OBSIDIAN_VAULT_DIR = os.environ.get("BOT_OBSIDIAN_DIR", _default_obsidian)
 
-# Mensajes largos: Telegram parte textos > 4096 chars en varios mensajes.
-# Si un mensaje supera LONG_MESSAGE_THRESHOLD, se espera LONG_MESSAGE_WAIT_SECONDS
-# por fragmentos adicionales y se unen en un solo prompt.
 LONG_MESSAGE_THRESHOLD = int(os.environ.get("BOT_LONG_MESSAGE_THRESHOLD", "400"))
 LONG_MESSAGE_WAIT_SECONDS = float(os.environ.get("BOT_LONG_MESSAGE_WAIT_SECONDS", "4"))
-
-# Minutos de inactividad tras los cuales el bot pregunta en qué chat enviar
-# el siguiente mensaje (0 = desactivado).
 CHAT_IDLE_MINUTES = float(os.environ.get("BOT_CHAT_IDLE_MINUTES", "30"))
 
 BASE_CLI_DIR = os.path.expanduser("~/.gemini/antigravity-cli")
@@ -59,8 +58,32 @@ DB_PATH = os.path.join(BASE_CLI_DIR, "conversation_summaries.db")
 USAGE_CACHE_PATH = os.path.join(BASE_CLI_DIR, "last_token_usage.json")
 STATE_CACHE_PATH = os.path.join(BASE_CLI_DIR, "telegram_bot_state.json")
 
-AGY_BIN = os.environ.get("AGY_BIN") or shutil.which("agy") or os.path.expanduser("~/.local/bin/agy")
-CLAUDE_BIN = os.environ.get("CLAUDE_BIN") or shutil.which("claude") or os.path.expanduser("~/.local/bin/claude")
+
+def _resolve_binary(env_var: str, name: str, win_fallbacks: list, unix_fallbacks: list) -> str:
+    if os.environ.get(env_var):
+        return os.environ[env_var]
+    found = shutil.which(name)
+    if found:
+        return found
+    for candidate in (win_fallbacks if IS_WINDOWS else unix_fallbacks):
+        expanded = os.path.expanduser(candidate)
+        if os.path.isfile(expanded):
+            return expanded
+    return name
+
+
+AGY_BIN = _resolve_binary(
+    "AGY_BIN",
+    "agy.exe" if IS_WINDOWS else "agy",
+    [r"~\AppData\Local\agy\bin\agy.exe", r"~\.local\bin\agy.exe"],
+    ["~/.local/bin/agy", "~/.gemini/antigravity-cli/bin/agy"],
+)
+CLAUDE_BIN = _resolve_binary(
+    "CLAUDE_BIN",
+    "claude.exe" if IS_WINDOWS else "claude",
+    [r"~\AppData\Roaming\npm\claude.cmd", r"~\.local\bin\claude.exe"],
+    ["~/.local/bin/claude"],
+)
 CLAUDE_PROJECTS_DIR = os.path.expanduser("~/.claude/projects")
 
 logging.basicConfig(
@@ -68,5 +91,4 @@ logging.basicConfig(
     level=logging.INFO,
 )
 logger = logging.getLogger("telegram_paulobot")
-# Evitar que httpx imprima la URL completa con el token del bot en cada getUpdates
 logging.getLogger("httpx").setLevel(logging.WARNING)

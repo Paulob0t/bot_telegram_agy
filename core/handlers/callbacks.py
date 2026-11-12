@@ -28,7 +28,7 @@ from core.claude_chats import (
     get_claude_slug_for_cwd,
     list_claude_projects,
 )
-from core.config import HOME_DIR, PROJECTS_BASE_DIR
+from core.config import HOME_DIR, IS_WINDOWS, PROJECTS_BASE_DIR
 from core.desktop_tools import build_screenshot_keyboard, capture_wayland_screenshot
 from core.executor import execution_manager
 from core.models import (
@@ -63,12 +63,15 @@ from core.obsidian import (
     pop_pending_pdf,
     toggle_checklist_line,
 )
+from core.handlers.commands import build_config_view, sync_telegram_commands_menu
 from core.state import session_state
 from core.utils import is_authorized, safe_edit, safe_reply
 
 
 async def _shutdown_bot_service():
     await asyncio.sleep(1.0)
+    if IS_WINDOWS:
+        os._exit(0)
     proc = await asyncio.create_subprocess_exec("systemctl", "--user", "stop", "telegram-bot.service")
     await proc.wait()
 
@@ -239,6 +242,8 @@ async def _handle_chat_guard_callbacks(query, data: str) -> bool:
 
 
 def _build_project_claude_shortcut(target_path: str, label_name: str):
+    if not session_state.is_feature_enabled("claude"):
+        return None
     slug = get_claude_slug_for_cwd(target_path)
     if not slug:
         return None
@@ -376,6 +381,14 @@ async def _handle_agy_chats_callbacks(query, data: str) -> bool:
 
 
 async def _handle_model_and_system_callbacks(query, data: str) -> bool:
+    if data.startswith("cfg_tog:"):
+        key = data.split(":", 1)[1]
+        session_state.toggle_feature(key)
+        await sync_telegram_commands_menu(query.get_bot())
+        markup, text = build_config_view()
+        await safe_edit(query.message, text, reply_markup=markup)
+        return True
+
     if data == "usage_sync":
         await safe_edit(query.message, "🔄 *Sincronizando cuotas de IA (Claude Code & Antigravity)...*")
         markup, text = await build_ai_quotas_dashboard()

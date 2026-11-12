@@ -2,8 +2,9 @@ import os
 import shutil
 import time
 import tempfile
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
+from core.config import HOME_DIR, IS_WINDOWS, logger
 from core.state import session_state
 from core.utils import is_authorized, safe_reply, safe_edit, format_uptime, get_git_branch
 from core.chats_db import build_resume_keyboard, build_delete_keyboard
@@ -43,44 +44,130 @@ from core.executor import execution_manager
 from core.chat_guard import chat_guard
 
 
+def get_active_bot_commands():
+    commands = [
+        BotCommand("start", "Panel principal y ayuda"),
+        BotCommand("config", "Activar o desactivar módulos del bot"),
+    ]
+    if session_state.is_feature_enabled("obsidian"):
+        commands.append(BotCommand("obsidian", "Explorar bóveda Obsidian .md y PDFs (0 tokens)"))
+        commands.append(BotCommand("prompts", "Ver y lanzar prompts técnicos T01..TXX"))
+    if session_state.is_feature_enabled("claude"):
+        commands.append(BotCommand("claude", "Proyectos y chats de Claude Code"))
+        commands.append(BotCommand("agy", "Cambiar motor a Antigravity (AGY)"))
+    commands.extend([
+        BotCommand("project", "Cambiar proyecto o repositorio (cwd)"),
+        BotCommand("resume", "Historial de chats y cambiar conversación"),
+        BotCommand("new", "Iniciar nuevo chat limpio"),
+        BotCommand("continue", "Continuar última conversación activa"),
+        BotCommand("current", "Ver proyecto, chat y modelo activos"),
+        BotCommand("model", "Cambiar o sincronizar modelo de IA"),
+        BotCommand("effort", "Ajustar nivel de razonamiento (low..max)"),
+        BotCommand("usage", "Ver capacidad y consumo de tokens"),
+        BotCommand("status", "Estado de AGY, RAM, disco y cola"),
+        BotCommand("queue", "Ver o gestionar cola de mensajes"),
+        BotCommand("cancel", "Cancelar ejecución actual"),
+    ])
+    if session_state.is_feature_enabled("screen"):
+        commands.append(BotCommand("screen", "Captura de pantalla de la PC"))
+    commands.extend([
+        BotCommand("delete", "Eliminar conversaciones guardadas"),
+        BotCommand("off", "Apagar servicio del bot"),
+    ])
+    return commands
+
+
+async def sync_telegram_commands_menu(bot) -> None:
+    commands = get_active_bot_commands()
+    try:
+        await bot.set_my_commands(commands)
+        logger.info("Menú de comandos de Telegram actualizado (%d comandos).", len(commands))
+    except Exception as e:
+        logger.warning("No se pudo actualizar el menú de comandos: %s", e)
+
+
+def build_config_view():
+    items = [
+        ("obsidian", "🟣 Obsidian & Prompts (/obsidian, /prompts)"),
+        ("claude", "🟠 Motor Claude Code (/claude, /agy)"),
+        ("screen", "📸 Captura de Pantalla (/screen)"),
+        ("chat_guard", "🛡️ Guardia de Inactividad (ChatGuard)"),
+    ]
+    keyboard = []
+    lines = [
+        "⚙️ **Configuración de Módulos del Bot (`/config`)**\n",
+        "Activa o desactiva las herramientas que usas. El menú de comandos `/` y `/start` se adaptan al instante:\n",
+    ]
+    for key, label in items:
+        enabled = session_state.is_feature_enabled(key)
+        status_icon = "✅" if enabled else "❌"
+        state_txt = "Activo" if enabled else "Desactivado"
+        lines.append(f"• {status_icon} **{label}:** `{state_txt}`")
+        keyboard.append([
+            InlineKeyboardButton(f"{status_icon} {label}", callback_data=f"cfg_tog:{key}")
+        ])
+    return InlineKeyboardMarkup(keyboard), "\n".join(lines)
+
+
+async def cmd_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_authorized(update):
+        return
+    markup, text = build_config_view()
+    await safe_reply(update.message, text, reply_markup=markup)
+
+
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
         return
+    user = update.effective_user
+    first_name = (user.first_name if user and user.first_name else "Developer").strip()
     model_disp, _ = get_effective_model_display()
     cwd_short = session_state.get_cwd_short_name()
     branch = get_git_branch(session_state.current_cwd)
     branch_str = f" (`{branch}`)" if branch else ""
+    os_label = "Windows" if IS_WINDOWS else "Linux"
 
-    msg = (
-        "👋 **¡Hola Paulo! Soy tu asistente de Antigravity (AGY)** ⚡\n\n"
-        "✨ *Streaming real-time, selector de proyectos y cola concurrente.*\n\n"
-        "🗂️ **Proyectos:**\n"
-        "• 📁 `/project` o `/cd` - Elegir repositorio de trabajo con un toque\n"
-        "• ⚡ `/cd <nombre>` - Cambiar directo (ej. `/cd wicode-back`, `/cd ~`)\n\n"
-        "🖥️ **Control Remoto de PC & Escritorio:**\n"
-        "• 📸 `/screen` o `/ss` - Captura de pantalla en vivo de tu laptop (Wayland)\n\n"
-        "🛠️ **Comandos de AGY, Claude & Obsidian:**\n"
-        "• 🟣 `/obsidian` o `/notas` - Explorar bóveda `.md`, checklists y PDFs (0 tokens)\n"
-        "• 🎯 `/prompts` - Ver o lanzar prompts técnicos `T01..TXX` en 1 toque\n"
-        "• 🟠 `/claude` - Proyectos y sesiones de Claude Code (ej. Stover)\n"
-        "• 🔵 `/agy` - Volver a motor Antigravity (AGY)\n"
-        "• 📊 `/usage` o `/tokens` - Ver capacidad y consumo de tokens\n"
-        "• 📂 `/resume` o `/chats` - Historial paginado de chats AGY\n"
-        "• 🗑️ `/delete` o `/borrar` - Eliminar chats individuales\n"
-        "• 🤖 `/model` - Cambiar o sincronizar modelos de IA (`agy models`)\n"
-        "• ⚡ `/effort` - Ajustar velocidad/razonamiento (`low`..`max`)\n"
-        "• 🔄 `/continue` - Usar última conversación\n"
-        "• ➕ `/new` - Nuevo chat independiente\n"
-        "• 📌 `/current` - Ver proyecto, chat y modelo configurados\n"
-        "• 💻 `/status` - Estado del servidor, RAM, disco y cola\n"
-        "• 📥 `/queue` o `/cola` - Ver cola de mensajes pendientes\n"
-        "• 🛑 `/cancel` - Cancelar tarea activa de AGY\n"
-        "• 🔌 `/off` o `/power` - Apagar bot de Telegram\n\n"
-        f"📂 **Proyecto activo:** `{cwd_short}`{branch_str}\n"
-        f"📍 **Chat actual:** `{session_state.current_conversation_title}`\n"
-        f"⚡ **Esfuerzo:** `{session_state.current_effort.upper()}` | **Modelo:** {model_disp}"
-    )
-    await safe_reply(update.message, msg)
+    sections = [
+        f"👋 **¡Hola {first_name}! Soy tu asistente de Antigravity (AGY)** ⚡\n",
+        "✨ *Streaming real-time, selector de proyectos y cola concurrente.*\n",
+        "🗂️ **Proyectos:**",
+        "• 📁 `/project` o `/cd` - Elegir repositorio de trabajo con un toque",
+        "• ⚡ `/cd <nombre>` - Cambiar directo a un proyecto\n",
+    ]
+
+    if session_state.is_feature_enabled("screen"):
+        sections.extend([
+            "🖥️ **Control Remoto de PC & Escritorio:**",
+            f"• 📸 `/screen` o `/ss` - Captura de pantalla en vivo ({os_label})\n",
+        ])
+
+    sections.append("🛠️ **Comandos Activos:**")
+    if session_state.is_feature_enabled("obsidian"):
+        sections.append("• 🟣 `/obsidian` o `/notas` - Explorar bóveda `.md`, checklists y PDFs (0 tokens)")
+        sections.append("• 🎯 `/prompts` - Ver o lanzar prompts técnicos `T01..TXX` en 1 toque")
+    if session_state.is_feature_enabled("claude"):
+        sections.append("• 🟠 `/claude` - Proyectos y sesiones de Claude Code")
+        sections.append("• 🔵 `/agy` - Volver a motor Antigravity (AGY)")
+
+    sections.extend([
+        "• 📊 `/usage` o `/tokens` - Ver capacidad y consumo de tokens",
+        "• 📂 `/resume` o `/chats` - Historial paginado de chats AGY",
+        "• 🗑️ `/delete` o `/borrar` - Eliminar chats individuales",
+        "• 🤖 `/model` - Cambiar o sincronizar modelos de IA (`agy models`)",
+        "• ⚡ `/effort` - Ajustar velocidad/razonamiento (`low`..`max`)",
+        "• 🔄 `/continue` - Usar última conversación",
+        "• ➕ `/new` - Nuevo chat independiente",
+        "• 📌 `/current` - Ver proyecto, chat y modelo configurados",
+        "• ⚙️ `/config` - Activar o quitar módulos del bot",
+        "• 💻 `/status` - Estado del servidor, RAM, disco y cola",
+        "• 📥 `/queue` o `/cola` - Ver cola de mensajes pendientes",
+        "• 🛑 `/cancel` - Cancelar tarea activa de AGY",
+        "• 🔌 `/off` o `/power` - Apagar bot de Telegram\n",
+        f"📂 **Proyecto activo:** `{cwd_short}`{branch_str}",
+        f"📍 **Chat actual:** `{session_state.current_conversation_title}`",
+        f"⚡ **Esfuerzo:** `{session_state.current_effort.upper()}` | **Modelo:** {model_disp}",
+    ])
+    await safe_reply(update.message, "\n".join(sections))
 
 
 async def cmd_project(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -104,7 +191,7 @@ async def cmd_project(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if target_path:
         session_state.set_cwd(target_path)
         summary = format_active_cwd_summary()
-        slug = get_claude_slug_for_cwd(target_path)
+        slug = get_claude_slug_for_cwd(target_path) if session_state.is_feature_enabled("claude") else None
         keyboard = []
         if slug:
             projects_cl = list_claude_projects()
@@ -189,6 +276,9 @@ async def cmd_claude(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Abre el menú exclusivo de proyectos y sesiones de Claude Code."""
     if not is_authorized(update):
         return
+    if not session_state.is_feature_enabled("claude"):
+        await safe_reply(update.message, "ℹ️ El módulo **Claude Code** está desactivado. Puedes activarlo en `/config`.")
+        return
     slug = get_claude_slug_for_cwd(session_state.current_cwd)
     projects_cl = list_claude_projects()
     cl_idx = next((i for i, p in enumerate(projects_cl) if p["slug"] == slug), None) if slug else None
@@ -217,6 +307,9 @@ async def cmd_obsidian(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Abre el explorador nativo de la bóveda Obsidian (0 tokens) o busca texto."""
     if not is_authorized(update):
         return
+    if not session_state.is_feature_enabled("obsidian"):
+        await safe_reply(update.message, "ℹ️ El módulo **Obsidian & Prompts** está desactivado. Puedes activarlo en `/config`.")
+        return
     if context.args and len(context.args) > 0:
         query = " ".join(context.args).strip()
         markup, text = search_vault(query)
@@ -229,6 +322,9 @@ async def cmd_obsidian(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_prompts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Abre directo los módulos de Prompts Técnicos (T01..TXX) del proyecto actual o de la bóveda."""
     if not is_authorized(update):
+        return
+    if not session_state.is_feature_enabled("obsidian"):
+        await safe_reply(update.message, "ℹ️ El módulo **Obsidian & Prompts** está desactivado. Puedes activarlo en `/config`.")
         return
     projects = list_vault_projects()
     cwd_base = os.path.basename(session_state.current_cwd.rstrip("/")).lower()
@@ -419,25 +515,34 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
         return
 
-    total, used, free = shutil.disk_usage("/home/paulobot")
+    disk_target = HOME_DIR if os.path.isdir(HOME_DIR) else os.path.abspath(os.sep)
+    total, used, free = shutil.disk_usage(disk_target)
     disk_total = f"{total // (2**30)} GB"
     disk_free = f"{free // (2**30)} GB"
     disk_used = f"{used // (2**30)} GB"
 
-    mem_info = {}
+    ram_str = "N/D"
     try:
-        with open("/proc/meminfo") as f:
-            for line in f:
-                parts = line.split(":")
-                if len(parts) == 2:
-                    mem_info[parts[0].strip()] = parts[1].strip()
-        mem_total_kb = int(mem_info.get("MemTotal", "0 kB").split()[0])
-        mem_avail_kb = int(mem_info.get("MemAvailable", "0 kB").split()[0])
-        mem_used_gb = round((mem_total_kb - mem_avail_kb) / 1024 / 1024, 1)
-        mem_total_gb = round(mem_total_kb / 1024 / 1024, 1)
+        import psutil
+        vm = psutil.virtual_memory()
+        mem_used_gb = round((vm.total - vm.available) / (1024**3), 1)
+        mem_total_gb = round(vm.total / (1024**3), 1)
         ram_str = f"{mem_used_gb} / {mem_total_gb} GB"
     except Exception:
-        ram_str = "N/D"
+        try:
+            mem_info = {}
+            with open("/proc/meminfo") as f:
+                for line in f:
+                    parts = line.split(":")
+                    if len(parts) == 2:
+                        mem_info[parts[0].strip()] = parts[1].strip()
+            mem_total_kb = int(mem_info.get("MemTotal", "0 kB").split()[0])
+            mem_avail_kb = int(mem_info.get("MemAvailable", "0 kB").split()[0])
+            mem_used_gb = round((mem_total_kb - mem_avail_kb) / 1024 / 1024, 1)
+            mem_total_gb = round(mem_total_kb / 1024 / 1024, 1)
+            ram_str = f"{mem_used_gb} / {mem_total_gb} GB"
+        except Exception:
+            ram_str = "N/D"
 
     if execution_manager.is_busy():
         elapsed = format_uptime(execution_manager.get_active_elapsed())
@@ -543,15 +648,19 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Toma una captura de pantalla del escritorio de la PC con grim y la envía por Telegram."""
+    """Toma una captura de pantalla del escritorio de la PC y la envía por Telegram."""
     if not is_authorized(update):
         return
+    if not session_state.is_feature_enabled("screen"):
+        await safe_reply(update.message, "ℹ️ El módulo **Captura de Pantalla** está desactivado. Puedes activarlo en `/config`.")
+        return
 
-    status_msg = await safe_reply(update.message, "📸 *Capturando pantalla de tu PC (Wayland / grim)...*")
+    backend_lbl = "Windows" if IS_WINDOWS else "Wayland / grim"
+    status_msg = await safe_reply(update.message, f"📸 *Capturando pantalla de tu PC ({backend_lbl})...*")
     ok, result = await capture_wayland_screenshot()
 
     if not ok:
-        await safe_edit(status_msg, f"❌ **No se pudo tomar la captura con `grim`:**\n`{result}`")
+        await safe_edit(status_msg, f"❌ **No se pudo tomar la captura:**\n`{result}`")
         return
 
     try:

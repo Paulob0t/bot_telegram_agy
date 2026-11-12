@@ -1,6 +1,6 @@
 # ⚡ Telegram Bot para Antigravity CLI (AGY) & Quickshell Ecosystem
 
-Asistente remoto de **Google Antigravity (`agy`)**, centro de control para desarrollo en Linux (Wayland / Hyprland / Omarchy) y ecosistema unificado de widgets **Quickshell** y hooks de notificación de **0 tokens**.
+Asistente remoto multiplataforma (**Linux Wayland / Hyprland / Omarchy** y **Windows 10/11**) para **Google Antigravity (`agy`)**, con soporte modular configurable en vivo (`/config`) para **Claude Code**, **Obsidian** y widgets **Quickshell** de **0 tokens**.
 
 ---
 
@@ -18,9 +18,14 @@ Asistente remoto de **Google Antigravity (`agy`)**, centro de control para desar
    - **Buffer automático (`> 400` caracteres):** Cuando pegas logs o bloques largos que Telegram divide en varios mensajes, el bot los agrupa en un buffer interactivo con botones (`🚀 Enviar todo`, `➕ Seguir pegando`, `🗑️ Descartar`) para enviarlos en un solo prompt.
    - **Guardia de inactividad (`> 30 min`):** Si vuelves a escribir tras 30 minutos de inactividad, el bot retiene el mensaje y te permite elegir en qué conversación ejecutarlo (`💬 Seguir actual`, `🆕 Nuevo chat` o cualquiera de los últimos chats del proyecto).
 
-3. **📸 Soporte Nativo de Imágenes y Capturas Wayland (`/screen`):**
-   - Envía fotos o capturas comprimidas/sin comprimir directamente al chat de Telegram; el bot las descarga en `/tmp/telegram-paulobot-media` e inyecta su ruta junto con tu instrucción para que AGY las inspeccione.
-   - `/screen` ejecuta `grim` sobre el display Wayland activo y envía una captura PNG del escritorio al chat.
+3. **📸 Soporte Nativo de Imágenes y Capturas Multiplataforma (`/screen`):**
+   - Envía fotos o capturas directamente al chat de Telegram; el bot las descarga en el directorio temporal del sistema e inyecta su ruta junto con tu instrucción para que AGY las inspeccione.
+   - `/screen` toma una captura PNG del escritorio usando `grim` en Linux/Wayland o `System.Drawing` (PowerShell) en Windows.
+
+4. **⚙️ Panel de Configuración de Módulos en Vivo (`/config`):**
+   - Activa o desactiva módulos opcionales con un toque (`🟣 Obsidian & Prompts`, `🟠 Claude Code`, `📸 Captura de Pantalla`, `🛡️ ChatGuard`).
+   - Al desactivar un módulo, se oculta automáticamente de `/start` y del menú `/` de Telegram (`set_my_commands`).
+   - En el primer arranque autodetecta si tienes instalado `claude` o la bóveda de Obsidian.
 
 4. **📊 Panel de Cuotas Unificado (`/usage` & Quickshell `paulobot.ai-tokens`):**
    - Comparte el mismo backend (`scripts/ai-token-stats`) entre el comando `/usage` de Telegram y el widget de la barra Quickshell.
@@ -104,12 +109,22 @@ ln -sfn "$PWD/quickshell/paulobot.ai-tokens" ~/.config/omarchy/plugins/paulobot.
 ln -sfn "$PWD/quickshell/paulobot.telegram-bot" ~/.config/omarchy/plugins/paulobot.telegram-bot
 ```
 
-### 3. Servicio `systemd`
+### 3. Ejecución en Linux (`systemd`) o Windows
+**En Linux (`systemd`):**
 ```bash
 mkdir -p ~/.config/systemd/user
 cp systemd/telegram-bot.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now telegram-bot.service
+```
+
+**En Windows 10/11:**
+```powershell
+pip install -r requirements.txt
+# Iniciar en segundo plano sin ventana de consola:
+wscript.exe windows\iniciar_bot_oculto.vbs
+# Opcional: registrar inicio automático al encender Windows:
+powershell -ExecutionPolicy Bypass -File windows\instalar_autostart.ps1
 ```
 
 ---
@@ -119,6 +134,9 @@ systemctl --user enable --now telegram-bot.service
 | Comando | Alias | Descripción |
 | :--- | :--- | :--- |
 | `/start` | `/help`, `/ayuda` | Muestra el panel general de ayuda y el estado actual |
+| `/config` | `/ajustes`, `/settings` | Activa o desactiva módulos opcionales (`Obsidian`, `Claude`, `Screen`, `ChatGuard`) |
+| `/obsidian` | `/notas`, `/vault` | Explora notas `.md`, checklists interactivos y PDFs de la bóveda (0 tokens) |
+| `/prompts` | `/tareas` | Lista y ejecuta prompts técnicos `T01..TXX` en 1 toque |
 | `/claude` | — | Lista los proyectos con chats de Claude Code (ej. `Stover`) y permite continuar sesiones (`claude -r` / `-c`) |
 | `/agy` | — | Regresa el motor activo a Antigravity (`agy`) |
 | `/project` | `/cd`, `/workspace`, `/repo` | Abre el selector de proyectos o cambia rápido (`/cd stover`) |
