@@ -11,7 +11,7 @@ from telegram.ext import (
     TypeHandler,
     filters,
 )
-from core.config import TOKEN, AUTHORIZED_USER_ID, logger
+from core.config import TOKEN, AUTHORIZED_USER_ID, apply_process_memory_guard, logger
 from core.handlers.commands import (
     cmd_start,
     cmd_config,
@@ -61,6 +61,7 @@ async def post_init(application: Application) -> None:
 
 
 def main():
+    apply_process_memory_guard()
     print(f"Iniciando Bot de Telegram Modular AGY (Autorizado: {AUTHORIZED_USER_ID})...")
     application = (
         ApplicationBuilder()

@@ -65,8 +65,27 @@ def format_full_response(response: str) -> str:
 
 
 def send_desktop_check(app_name: str, ws_name: str):
-    """Muestra únicamente `✓ Tarea lista · <Proyecto>` en Omarchy."""
+    """Muestra aviso nativo de escritorio (Omarchy/Linux o Windows Balloon Toast)."""
     title = f"Tarea lista · {ws_name}" if ws_name else "Tarea lista"
+    if sys.platform == "win32":
+        safe_app = app_name.replace("'", "''")
+        safe_title = f"✓ {title}".replace("'", "''")
+        ps_cmd = (
+            "Add-Type -AssemblyName System.Windows.Forms,System.Drawing; "
+            "$n = New-Object System.Windows.Forms.NotifyIcon; "
+            "$n.Icon = [System.Drawing.SystemIcons]::Information; "
+            "$n.Visible = $true; "
+            f"$n.ShowBalloonTip(4000, '{safe_app}', '{safe_title}', [System.Windows.Forms.ToolTipIcon]::Info); "
+            "Start-Sleep -Milliseconds 4200; "
+            "$n.Dispose()"
+        )
+        subprocess.Popen(
+            ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_cmd],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000),
+        )
+        return
     if shutil.which("omarchy-notification-send"):
         subprocess.run(
             ["omarchy-notification-send", "--app-name", app_name, "-g", "✓", "-u", "normal", "-t", "4000", title],

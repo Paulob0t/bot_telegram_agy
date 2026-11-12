@@ -522,12 +522,15 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     disk_used = f"{used // (2**30)} GB"
 
     ram_str = "N/D"
+    bot_ram_str = "N/D"
     try:
         import psutil
         vm = psutil.virtual_memory()
         mem_used_gb = round((vm.total - vm.available) / (1024**3), 1)
         mem_total_gb = round(vm.total / (1024**3), 1)
         ram_str = f"{mem_used_gb} / {mem_total_gb} GB"
+        bot_rss_mb = round(psutil.Process(os.getpid()).memory_info().rss / (1024**2), 1)
+        bot_ram_str = f"{bot_rss_mb} MB"
     except Exception:
         try:
             mem_info = {}
@@ -568,7 +571,8 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• **Cola de Mensajes:** {queue_str}\n"
         f"• **Proyecto (`cwd`):** `{cwd_short}`{branch_str}\n"
         f"• **Chat actual:** {session_state.current_conversation_title}\n"
-        f"• **Memoria RAM:** {ram_str}\n"
+        f"• **RAM del Bot:** `{bot_ram_str}`\n"
+        f"• **Memoria RAM PC:** {ram_str}\n"
         f"• **Disco (/home):** {disk_used} usados / {disk_free} libres (Total: {disk_total})"
     )
     await safe_reply(update.message, msg)

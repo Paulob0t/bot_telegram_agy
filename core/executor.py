@@ -8,7 +8,7 @@ import traceback
 from dataclasses import dataclass, field
 from typing import Optional, List, Any
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from core.config import AGY_BIN, CLAUDE_BIN, HOME_DIR, IS_WINDOWS, logger
+from core.config import AGY_BIN, CLAUDE_BIN, HOME_DIR, IS_WINDOWS, logger, trim_process_memory
 from core.state import session_state
 from core.utils import (
     safe_reply,
@@ -390,8 +390,11 @@ class AGYExecutionManager:
         env["CLAUDE_FROM_TELEGRAM"] = "1"
 
         try:
-            proc_kwargs = {"limit": 10 * 1024 * 1024}
-            if not IS_WINDOWS:
+            proc_kwargs = {"limit": 2 * 1024 * 1024}
+            if IS_WINDOWS:
+                import subprocess as _sp
+                proc_kwargs["creationflags"] = getattr(_sp, "CREATE_NO_WINDOW", 0x08000000)
+            else:
                 proc_kwargs["start_new_session"] = True
             proc = await asyncio.create_subprocess_exec(
                 *command,
@@ -555,6 +558,7 @@ class AGYExecutionManager:
                         os.remove(tf)
                     except Exception:
                         pass
+            trim_process_memory()
 
 
 execution_manager = AGYExecutionManager()

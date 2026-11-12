@@ -8,6 +8,8 @@ ExecStart=/usr/bin/python -u /run/media/paulobot/Datos/Projects/telegram-paulobo
 WorkingDirectory=/run/media/paulobot/Datos/Projects/telegram-paulobot
 Restart=on-failure
 RestartSec=3
+MemoryHigh=120M
+MemoryMax=180M
 Environment=PATH=/home/paulobot/.local/bin:/home/paulobot/.gemini/antigravity-cli/bin:/usr/local/sbin:/usr/local/bin:/usr/bin:/bin
 Environment=HOME=/home/paulobot
 EnvironmentFile=-/run/media/paulobot/Datos/Projects/telegram-paulobot/.env

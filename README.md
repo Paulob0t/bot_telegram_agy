@@ -118,11 +118,11 @@ systemctl --user daemon-reload
 systemctl --user enable --now telegram-bot.service
 ```
 
-**En Windows 10/11:**
+**En Windows 10/11 (con icono en bandeja del sistema / System Tray):**
 ```powershell
 pip install -r requirements.txt
-# Iniciar en segundo plano sin ventana de consola:
-wscript.exe windows\iniciar_bot_oculto.vbs
+# Iniciar icono verde/gris en la barra de tareas (enciende el bot y muestra notificaciones):
+wscript.exe windows\iniciar_tray.vbs
 # Opcional: registrar inicio automático al encender Windows:
 powershell -ExecutionPolicy Bypass -File windows\instalar_autostart.ps1
 ```

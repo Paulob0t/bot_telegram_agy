@@ -52,6 +52,7 @@ OBSIDIAN_VAULT_DIR = os.environ.get("BOT_OBSIDIAN_DIR", _default_obsidian)
 LONG_MESSAGE_THRESHOLD = int(os.environ.get("BOT_LONG_MESSAGE_THRESHOLD", "400"))
 LONG_MESSAGE_WAIT_SECONDS = float(os.environ.get("BOT_LONG_MESSAGE_WAIT_SECONDS", "4"))
 CHAT_IDLE_MINUTES = float(os.environ.get("BOT_CHAT_IDLE_MINUTES", "30"))
+BOT_MAX_RAM_MB = int(os.environ.get("BOT_MAX_RAM_MB", "120"))
 
 BASE_CLI_DIR = os.path.expanduser("~/.gemini/antigravity-cli")
 DB_PATH = os.path.join(BASE_CLI_DIR, "conversation_summaries.db")
@@ -92,3 +93,31 @@ logging.basicConfig(
 )
 logger = logging.getLogger("telegram_paulobot")
 logging.getLogger("httpx").setLevel(logging.WARNING)
+
+
+def apply_process_memory_guard(max_mb: int = BOT_MAX_RAM_MB) -> None:
+    """Ajusta el recolector de basura de Python y limita el working set del proceso en Windows."""
+    import gc
+    gc.set_threshold(400, 5, 5)
+    if IS_WINDOWS and max_mb > 0:
+        try:
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            handle = kernel32.GetCurrentProcess()
+            min_ws = 8 * 1024 * 1024
+            max_ws = max_mb * 1024 * 1024
+            kernel32.SetProcessWorkingSetSize(handle, ctypes.c_size_t(min_ws), ctypes.c_size_t(max_ws))
+        except Exception:
+            pass
+
+
+def trim_process_memory() -> None:
+    """Libera memoria no referenciada tras finalizar una ejecución pesada."""
+    import gc
+    gc.collect()
+    if IS_WINDOWS:
+        try:
+            import ctypes
+            ctypes.windll.psapi.EmptyWorkingSet(ctypes.windll.kernel32.GetCurrentProcess())
+        except Exception:
+            pass
