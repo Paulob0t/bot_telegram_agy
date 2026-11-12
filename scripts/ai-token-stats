@@ -90,6 +90,7 @@ def get_antigravity_quota() -> dict:
 
         argon_week_pct = 0.0
         argon_week_reset = ""
+        extra_quotas = []
 
         for line in lines:
             line = line.strip()
@@ -117,6 +118,14 @@ def get_antigravity_quota() -> dict:
             elif "Gemini 4 Argon" in line:
                 argon_week_pct = pct
                 argon_week_reset = reset
+            elif m:
+                label_part = line[: m.start()].strip()
+                extra_quotas.append({
+                    "label": label_part,
+                    "remaining_pct": pct,
+                    "used_pct": round(100.0 - pct, 2),
+                    "reset": reset,
+                })
 
         return {
             "available": True,
@@ -141,6 +150,7 @@ def get_antigravity_quota() -> dict:
                 "week_used_pct": round(100.0 - argon_week_pct, 2),
                 "week_reset": argon_week_reset,
             },
+            "extra": extra_quotas,
         }
     except Exception as e:
         return {"available": False, "error": str(e)}

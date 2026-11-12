@@ -90,7 +90,7 @@ class BotSessionState:
             self.current_model = str(model).strip() if model else None
             if self.current_model:
                 lower_m = self.current_model.lower()
-                for eff in ("low", "medium", "high"):
+                for eff in ("xhigh", "low", "medium", "high"):
                     if lower_m.endswith(f"-{eff}"):
                         self.current_effort = eff
                         break
@@ -218,7 +218,7 @@ class BotSessionState:
         self.current_model = model_id if (model_id and model_id != "DEFAULT") else None
         if self.current_model:
             lower_m = self.current_model.lower()
-            for eff in ("low", "medium", "high"):
+            for eff in ("xhigh", "low", "medium", "high"):
                 if lower_m.endswith(f"-{eff}"):
                     self.current_effort = eff
                     break
@@ -231,14 +231,17 @@ class BotSessionState:
         self.current_effort = clean
         if self.current_model:
             lower_m = self.current_model.lower()
-            for suffix in ("-low", "-medium", "-high"):
+            for suffix in ("-xhigh", "-low", "-medium", "-high"):
                 if lower_m.endswith(suffix):
                     base = self.current_model[: -len(suffix)]
-                    target_suffix = clean if clean in ("low", "medium", "high") else "high"
-                    # gpt-oss-120b only exists as medium
                     if "gpt-oss" in base.lower():
                         self.current_model = f"{base}-medium"
+                    elif "hydrogen" in base.lower() and clean in ("low", "medium", "high", "xhigh"):
+                        self.current_model = f"{base}-{clean}"
+                    elif "hydrogen" in base.lower() and clean == "max":
+                        self.current_model = f"{base}-xhigh"
                     else:
+                        target_suffix = clean if clean in ("low", "medium", "high") else "high"
                         self.current_model = f"{base}-{target_suffix}"
                     break
         self.save_state()

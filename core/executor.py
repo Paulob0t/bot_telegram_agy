@@ -189,7 +189,7 @@ class AGYExecutionManager:
         )
         chosen_effort = effort_override if effort_override else session_state.current_effort
         if chosen_model and not is_claude:
-            for eff in ("low", "medium", "high"):
+            for eff in ("xhigh", "low", "medium", "high"):
                 if chosen_model.lower().endswith(f"-{eff}"):
                     chosen_effort = eff
                     break
@@ -342,7 +342,7 @@ class AGYExecutionManager:
 
             if job.model:
                 command.extend(["--model", job.model])
-                if not job.model.lower().endswith(("-low", "-medium", "-high")) and job.effort:
+                if not job.model.lower().endswith(("-xhigh", "-low", "-medium", "-high")) and job.effort:
                     command.extend(["--effort", job.effort])
             elif job.effort:
                 command.extend(["--effort", job.effort])

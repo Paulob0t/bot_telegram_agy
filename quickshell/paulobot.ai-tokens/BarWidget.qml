@@ -38,11 +38,52 @@ BarWidget {
   function close() { popupOpen = false }
   function open() {
     popupOpen = true
+    // Carga instantánea de caché + refresco en background
+    loadCache()
     root.refresh()
   }
   function toggle() {
     popupOpen = !popupOpen
-    if (popupOpen) root.refresh()
+    if (popupOpen) {
+      loadCache()
+      root.refresh()
+    }
+  }
+
+  function applyData(parsed) {
+    if (!parsed) return
+    var c = parsed.claude_code
+    if (c && c.available) {
+      root.claudeSessionUsed = Number(c.session_used_pct)
+      root.claudeWeekUsed = Number(c.week_used_pct)
+      root.claudeSessionReset = root.fmtClaude(c.session_resets)
+      root.claudeWeekReset = root.fmtClaude(c.week_resets)
+    }
+    var ag = parsed.antigravity
+    if (ag && ag.available) {
+      if (ag.gemini) {
+        root.agGemini5h = Number(ag.gemini.five_hour_remaining_pct)
+        root.agGeminiWeek = Number(ag.gemini.week_remaining_pct)
+        root.agGemini5hReset = root.fmtIso(ag.gemini.five_hour_reset)
+        root.agGeminiWeekReset = root.fmtIso(ag.gemini.week_reset)
+      }
+      if (ag.claude_gpt) {
+        root.agClaude5h = Number(ag.claude_gpt.five_hour_remaining_pct)
+        root.agClaudeWeek = Number(ag.claude_gpt.week_remaining_pct)
+        root.agClaude5hReset = root.fmtIso(ag.claude_gpt.five_hour_reset)
+        root.agClaudeWeekReset = root.fmtIso(ag.claude_gpt.week_reset)
+      }
+      if (ag.argon) {
+        root.agArgonWeek = Number(ag.argon.week_remaining_pct)
+        root.agArgonWeekReset = root.fmtIso(ag.argon.week_reset)
+      }
+    }
+  }
+
+  function loadCache() {
+    if (!cacheProcess.running) {
+      cacheProcess.running = true
+    }
   }
 
   function refresh() {
@@ -65,6 +106,23 @@ BarWidget {
     return String(s || "").replace(/\s*\(.*\)\s*$/, "")
   }
 
+  // Proceso rápido de caché para apertura instantánea (0.01s)
+  Process {
+    id: cacheProcess
+    running: false
+    command: ["/home/paulobot/.local/bin/ai-token-stats", "--cached"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        try {
+          var parsed = JSON.parse(text || "{}")
+          root.applyData(parsed)
+        } catch (e) {}
+      }
+    }
+  }
+
+  // Proceso en vivo (ejecutado concurrentemente en Python)
   Process {
     id: statsProcess
     running: false
@@ -75,38 +133,24 @@ BarWidget {
         root.loading = false
         try {
           var res = JSON.parse(text || "{}")
-          var c = res.claude_code
-          if (c && c.available) {
-            root.claudeSessionUsed = Number(c.session_used_pct)
-            root.claudeWeekUsed = Number(c.week_used_pct)
-            root.claudeSessionReset = root.fmtClaude(c.session_resets)
-            root.claudeWeekReset = root.fmtClaude(c.week_resets)
-          }
-          var ag = res.antigravity
-          if (ag && ag.available) {
-            if (ag.gemini) {
-              root.agGemini5h = Number(ag.gemini.five_hour_remaining_pct)
-              root.agGeminiWeek = Number(ag.gemini.week_remaining_pct)
-              root.agGemini5hReset = root.fmtIso(ag.gemini.five_hour_reset)
-              root.agGeminiWeekReset = root.fmtIso(ag.gemini.week_reset)
-            }
-            if (ag.claude_gpt) {
-              root.agClaude5h = Number(ag.claude_gpt.five_hour_remaining_pct)
-              root.agClaudeWeek = Number(ag.claude_gpt.week_remaining_pct)
-              root.agClaude5hReset = root.fmtIso(ag.claude_gpt.five_hour_reset)
-              root.agClaudeWeekReset = root.fmtIso(ag.claude_gpt.week_reset)
-            }
-            if (ag.argon) {
-              root.agArgonWeek = Number(ag.argon.week_remaining_pct)
-              root.agArgonWeekReset = root.fmtIso(ag.argon.week_reset)
-            }
-          }
+          root.applyData(res)
         } catch (e) {}
       }
     }
   }
 
-  // On-demand only: consulta /usage únicamente al abrir el popup o pulsar 󰑐
+  // Carga inicial en arranque
+  Component.onCompleted: {
+    loadCache()
+  }
+
+  // Timer periódico cada 3 minutos en segundo plano para mantener la caché fresca
+  Timer {
+    interval: 180000
+    running: true
+    repeat: true
+    onTriggered: root.refresh()
+  }
 
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight

@@ -25,6 +25,10 @@ DEFAULT_MODELS_CATALOG: List[Dict[str, str]] = [
     {"id": "gemini-4-argon-medium", "name": "Gemini 4 Argon (Medium)", "icon": "🧪"},
     {"id": "gemini-4-argon-high", "name": "Gemini 4 Argon (High)", "icon": "🧪"},
     {"id": "gemini-4-argon-low", "name": "Gemini 4 Argon (Low)", "icon": "🧪"},
+    {"id": "gemini-4-hydrogen-xhigh", "name": "Gemini 4 Hydrogen (XHigh)", "icon": "🔥"},
+    {"id": "gemini-4-hydrogen-high", "name": "Gemini 4 Hydrogen (High)", "icon": "🧬"},
+    {"id": "gemini-4-hydrogen-medium", "name": "Gemini 4 Hydrogen (Medium)", "icon": "🧬"},
+    {"id": "gemini-4-hydrogen-low", "name": "Gemini 4 Hydrogen (Low)", "icon": "🧬"},
     {"id": "gemini-3.8-flash-high", "name": "Gemini 3.8 Flash (High)", "icon": "⚡"},
     {"id": "gemini-3.8-flash-medium", "name": "Gemini 3.8 Flash (Medium)", "icon": "⚡"},
     {"id": "gemini-3.8-flash-low", "name": "Gemini 3.8 Flash (Low)", "icon": "⚡"},
@@ -44,6 +48,8 @@ def _pick_icon_for_model(model_id: str) -> str:
     m = model_id.lower()
     if "deepseek" in m:
         return "🧠" if "reason" in m else "🐋"
+    if "hydrogen" in m:
+        return "🔥" if "xhigh" in m else "🧬"
     if "argon" in m:
         return "🧪"
     if "flash" in m:
@@ -385,6 +391,11 @@ async def build_ai_quotas_dashboard() -> Tuple[InlineKeyboardMarkup, str]:
         lines.append(f"• **Claude & GPT · 5 h:** {_quota_bar(c5)}" + (f" _(Reinicia {c5_r})_" if c5_r else ""))
         lines.append(f"• **Claude & GPT · Semanal:** {_quota_bar(cw)}" + (f" _(Reinicia {cw_r})_" if cw_r else ""))
         lines.append(f"• **Gemini 4 Argon · Semanal:** {_quota_bar(aw)}" + (f" _(Reinicia {aw_r})_" if aw_r else ""))
+        for ext in ag.get("extra") or []:
+            epct = ext.get("remaining_pct", 0)
+            erst = _fmt_iso_local(ext.get("reset", ""))
+            elbl = re.sub(r"\s{2,}", " · ", str(ext.get("label", "Extra")).strip())
+            lines.append(f"• **{elbl}:** {_quota_bar(epct)}" + (f" _(Reinicia {erst})_" if erst else ""))
     else:
         lines.append("• _No disponible_")
 
