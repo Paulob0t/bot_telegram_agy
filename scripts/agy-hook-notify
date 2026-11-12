@@ -60,7 +60,7 @@ def main():
         workspaces = payload.get("workspacePaths", [])
         transcript_path = payload.get("transcriptPath", "")
 
-        ws_name = os.path.basename(workspaces[0].rstrip("/")) if workspaces else "Workspace"
+        ws_name = os.path.basename(workspaces[0].rstrip("/\\")) if workspaces else "Workspace"
         task_title, raw_response = extract_agy_transcript(transcript_path)
         if not task_title:
             task_title = "Tarea finalizada"
