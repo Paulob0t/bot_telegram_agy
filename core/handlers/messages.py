@@ -72,10 +72,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not prompt:
         return
 
-    buffered = await long_message_buffer.handle(
-        update.message.chat_id, prompt, update.message, chat_guard_submit, temp_files=temp_files
-    )
-    if buffered:
-        return
+    if session_state.is_feature_enabled("long_buffer"):
+        buffered = await long_message_buffer.handle(
+            update.message.chat_id, prompt, update.message, chat_guard_submit, temp_files=temp_files
+        )
+        if buffered:
+            return
 
     await chat_guard_submit(prompt, update.message, temp_files=temp_files)

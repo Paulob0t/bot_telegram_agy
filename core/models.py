@@ -350,20 +350,20 @@ async def build_ai_quotas_dashboard() -> Tuple[InlineKeyboardMarkup, str]:
 
     lines = ["📊 **Uso de IA (Quickshell Sync)**\n"]
 
-    # 1. Claude Code (porcentaje USADO, igual que en BarWidget.qml)
-    c = data.get("claude_code") or {}
-    lines.append("🟠 **CLAUDE CODE**")
-    if c.get("available"):
-        s_used = c.get("session_used_pct", 0)
-        w_used = c.get("week_used_pct", 0)
-        s_rst = _fmt_claude_reset(c.get("session_resets", ""))
-        w_rst = _fmt_claude_reset(c.get("week_resets", ""))
-        lines.append(f"• **Sesión · 5 h:** {_quota_bar(s_used, is_used=True)}" + (f" _(Reinicia {s_rst})_" if s_rst else ""))
-        lines.append(f"• **Semanal:** {_quota_bar(w_used, is_used=True)}" + (f" _(Reinicia {w_rst})_" if w_rst else ""))
-    else:
-        lines.append("• _No disponible_")
+    if session_state.is_feature_enabled("claude"):
+        c = data.get("claude_code") or {}
+        lines.append("🟠 **CLAUDE CODE**")
+        if c.get("available"):
+            s_used = c.get("session_used_pct", 0)
+            w_used = c.get("week_used_pct", 0)
+            s_rst = _fmt_claude_reset(c.get("session_resets", ""))
+            w_rst = _fmt_claude_reset(c.get("week_resets", ""))
+            lines.append(f"• **Sesión · 5 h:** {_quota_bar(s_used, is_used=True)}" + (f" _(Reinicia {s_rst})_" if s_rst else ""))
+            lines.append(f"• **Semanal:** {_quota_bar(w_used, is_used=True)}" + (f" _(Reinicia {w_rst})_" if w_rst else ""))
+        else:
+            lines.append("• _No disponible_")
 
-    lines.append("")
+        lines.append("")
 
     # 2. Antigravity (porcentaje LIBRE/RESTANTE, igual que en BarWidget.qml)
     ag = data.get("antigravity") or {}

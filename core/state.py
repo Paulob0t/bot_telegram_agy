@@ -16,17 +16,30 @@ from core.config import (
 )
 
 VALID_EFFORTS = ("low", "medium", "high", "xhigh", "max")
-FEATURE_KEYS = ("obsidian", "claude", "screen", "chat_guard")
+FEATURE_KEYS = (
+    "claude",
+    "obsidian",
+    "prompts",
+    "screen",
+    "chat_guard",
+    "long_buffer",
+    "notify_telegram",
+    "notify_desktop",
+)
 
 
 def _default_features() -> Dict[str, bool]:
     has_obsidian = os.path.isdir(OBSIDIAN_VAULT_DIR)
     has_claude = bool(shutil.which(CLAUDE_BIN) or os.path.isfile(CLAUDE_BIN))
     return {
-        "obsidian": has_obsidian,
         "claude": has_claude,
+        "obsidian": has_obsidian,
+        "prompts": has_obsidian,
         "screen": True,
         "chat_guard": True,
+        "long_buffer": True,
+        "notify_telegram": True,
+        "notify_desktop": True,
     }
 
 
@@ -277,6 +290,23 @@ class BotSessionState:
             self.current_engine = "agy"
         self.save_state()
         return new_val
+
+    def set_features_preset(self, preset: str) -> None:
+        if preset == "all":
+            self.features = {k: True for k in FEATURE_KEYS}
+        elif preset == "agy_minimal":
+            self.features = {
+                "claude": False,
+                "obsidian": False,
+                "prompts": False,
+                "screen": True,
+                "chat_guard": True,
+                "long_buffer": True,
+                "notify_telegram": True,
+                "notify_desktop": True,
+            }
+            self.current_engine = "agy"
+        self.save_state()
 
     def get_cwd_short_name(self, cwd_path: Optional[str] = None) -> str:
         target = cwd_path or self.current_cwd

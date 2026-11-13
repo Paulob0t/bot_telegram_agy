@@ -389,6 +389,14 @@ async def _handle_model_and_system_callbacks(query, data: str) -> bool:
         await safe_edit(query.message, text, reply_markup=markup)
         return True
 
+    if data.startswith("cfg_preset:"):
+        preset = data.split(":", 1)[1]
+        session_state.set_features_preset(preset)
+        await sync_telegram_commands_menu(query.get_bot())
+        markup, text = build_config_view()
+        await safe_edit(query.message, text, reply_markup=markup)
+        return True
+
     if data == "usage_sync":
         await safe_edit(query.message, "🔄 *Sincronizando cuotas de IA (Claude Code & Antigravity)...*")
         markup, text = await build_ai_quotas_dashboard()

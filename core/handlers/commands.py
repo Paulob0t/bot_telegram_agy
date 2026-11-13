@@ -48,13 +48,14 @@ def get_active_bot_commands():
     commands = [
         BotCommand("start", "Panel principal y ayuda"),
         BotCommand("config", "Activar o desactivar módulos del bot"),
+        BotCommand("agy", "Cambiar o asegurar motor Antigravity (AGY)"),
     ]
-    if session_state.is_feature_enabled("obsidian"):
-        commands.append(BotCommand("obsidian", "Explorar bóveda Obsidian .md y PDFs (0 tokens)"))
-        commands.append(BotCommand("prompts", "Ver y lanzar prompts técnicos T01..TXX"))
     if session_state.is_feature_enabled("claude"):
         commands.append(BotCommand("claude", "Proyectos y chats de Claude Code"))
-        commands.append(BotCommand("agy", "Cambiar motor a Antigravity (AGY)"))
+    if session_state.is_feature_enabled("obsidian"):
+        commands.append(BotCommand("obsidian", "Explorar bóveda Obsidian .md y PDFs (0 tokens)"))
+    if session_state.is_feature_enabled("prompts"):
+        commands.append(BotCommand("prompts", "Ver y lanzar prompts técnicos T01..TXX"))
     commands.extend([
         BotCommand("project", "Cambiar proyecto o repositorio (cwd)"),
         BotCommand("resume", "Historial de chats y cambiar conversación"),
@@ -88,15 +89,20 @@ async def sync_telegram_commands_menu(bot) -> None:
 
 def build_config_view():
     items = [
-        ("obsidian", "🟣 Obsidian & Prompts (/obsidian, /prompts)"),
-        ("claude", "🟠 Motor Claude Code (/claude, /agy)"),
+        ("claude", "🟠 Claude Code CLI (/claude)"),
+        ("obsidian", "🟣 Bóveda Obsidian (/obsidian)"),
+        ("prompts", "🎯 Prompts Técnicos (/prompts)"),
         ("screen", "📸 Captura de Pantalla (/screen)"),
-        ("chat_guard", "🛡️ Guardia de Inactividad (ChatGuard)"),
+        ("chat_guard", "🛡️ Confirmar Chat tras Inactividad"),
+        ("long_buffer", "🧩 Buffer de Textos Largos (>400 chars)"),
+        ("notify_telegram", "🔔 Avisos de Terminal a Telegram"),
+        ("notify_desktop", "🖥️ Avisos de Escritorio (PC)"),
     ]
     keyboard = []
     lines = [
         "⚙️ **Configuración de Módulos del Bot (`/config`)**\n",
-        "Activa o desactiva las herramientas que usas. El menú de comandos `/` y `/start` se adaptan al instante:\n",
+        "🔵 *El motor principal Antigravity (AGY) siempre está activo.*",
+        "*Toca cualquier función extra para encenderla (✅) o apagarla (❌):*\n",
     ]
     for key, label in items:
         enabled = session_state.is_feature_enabled(key)
@@ -106,6 +112,10 @@ def build_config_view():
         keyboard.append([
             InlineKeyboardButton(f"{status_icon} {label}", callback_data=f"cfg_tog:{key}")
         ])
+    keyboard.append([
+        InlineKeyboardButton("🔵 Solo AGY (Básico)", callback_data="cfg_preset:agy_minimal"),
+        InlineKeyboardButton("✅ Activar Todo", callback_data="cfg_preset:all"),
+    ])
     return InlineKeyboardMarkup(keyboard), "\n".join(lines)
 
 
@@ -142,12 +152,13 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ])
 
     sections.append("🛠️ **Comandos Activos:**")
-    if session_state.is_feature_enabled("obsidian"):
-        sections.append("• 🟣 `/obsidian` o `/notas` - Explorar bóveda `.md`, checklists y PDFs (0 tokens)")
-        sections.append("• 🎯 `/prompts` - Ver o lanzar prompts técnicos `T01..TXX` en 1 toque")
+    sections.append("• 🔵 `/agy` - Asegurar motor Antigravity (AGY)")
     if session_state.is_feature_enabled("claude"):
         sections.append("• 🟠 `/claude` - Proyectos y sesiones de Claude Code")
-        sections.append("• 🔵 `/agy` - Volver a motor Antigravity (AGY)")
+    if session_state.is_feature_enabled("obsidian"):
+        sections.append("• 🟣 `/obsidian` o `/notas` - Explorar bóveda `.md`, checklists y PDFs (0 tokens)")
+    if session_state.is_feature_enabled("prompts"):
+        sections.append("• 🎯 `/prompts` - Ver o lanzar prompts técnicos `T01..TXX` en 1 toque")
 
     sections.extend([
         "• 📊 `/usage` o `/tokens` - Ver capacidad y consumo de tokens",
@@ -323,8 +334,8 @@ async def cmd_prompts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Abre directo los módulos de Prompts Técnicos (T01..TXX) del proyecto actual o de la bóveda."""
     if not is_authorized(update):
         return
-    if not session_state.is_feature_enabled("obsidian"):
-        await safe_reply(update.message, "ℹ️ El módulo **Obsidian & Prompts** está desactivado. Puedes activarlo en `/config`.")
+    if not session_state.is_feature_enabled("prompts"):
+        await safe_reply(update.message, "ℹ️ El módulo **Prompts Técnicos** está desactivado. Puedes activarlo en `/config`.")
         return
     projects = list_vault_projects()
     cwd_base = os.path.basename(session_state.current_cwd.rstrip("/")).lower()
