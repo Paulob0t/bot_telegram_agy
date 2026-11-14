@@ -123,14 +123,26 @@ def get_effective_model_display() -> Tuple[str, int]:
 
 
 def get_models_catalog() -> List[Dict[str, str]]:
-    """Obtiene la lista de modelos desde la caché sincronizada o el catálogo base."""
+    """Obtiene la lista de modelos desde la caché sincronizada fusionando modelos nuevos del catálogo base."""
     if os.path.exists(MODELS_CACHE_PATH):
         try:
             with open(MODELS_CACHE_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
             models = data.get("models", [])
             if isinstance(models, list) and len(models) > 0:
-                return models
+                cached_by_id = {m.get("id"): m for m in models if isinstance(m, dict) and m.get("id")}
+                merged: List[Dict[str, str]] = []
+                seen = set()
+                for base_m in DEFAULT_MODELS_CATALOG:
+                    mid = base_m["id"]
+                    merged.append(cached_by_id.get(mid, base_m))
+                    seen.add(mid)
+                for m in models:
+                    mid = m.get("id") if isinstance(m, dict) else None
+                    if mid and mid not in seen:
+                        merged.append(m)
+                        seen.add(mid)
+                return merged
         except Exception:
             pass
     return DEFAULT_MODELS_CATALOG

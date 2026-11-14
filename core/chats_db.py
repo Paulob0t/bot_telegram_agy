@@ -101,7 +101,11 @@ def build_resume_keyboard(page: int = 0, page_size: int = 5):
     keyboard = []
     for cid, title, _ in current_chats:
         clean_title = title.strip().replace("\n", " ")
-        btn_text = f"💬 {clean_title[:32]}..." if len(clean_title) > 32 else f"💬 {clean_title}"
+        mapped_cwd = session_state.get_conversation_cwd(cid)
+        proj_tag = f" [{session_state.get_cwd_short_name(mapped_cwd)[:14]}]" if mapped_cwd else ""
+        max_t = 28 if proj_tag else 32
+        short_t = f"{clean_title[:max_t]}..." if len(clean_title) > max_t else clean_title
+        btn_text = f"💬 {short_t}{proj_tag}"
         keyboard.append([InlineKeyboardButton(btn_text, callback_data=f"res:{cid}")])
 
     nav_row = []

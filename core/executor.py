@@ -261,6 +261,7 @@ class AGYExecutionManager:
         eligió otro chat mientras corría. Retorna el título fijado o None.
         """
         if job.conv_id not in (None, "NEW", "LATEST"):
+            session_state.bind_conversation_cwd(job.conv_id, job.cwd)
             return None
         if session_state.current_conversation_id is not None:
             return None
@@ -268,8 +269,8 @@ class AGYExecutionManager:
         if not latest:
             return None
         conv_id, title = latest[0], latest[1]
-        session_state.set_conversation(conv_id, f"💬 {title}")
-        logger.info("Chat fijado tras ejecución: %s (%s)", title, conv_id)
+        session_state.set_conversation(conv_id, f"💬 {title}", cwd=job.cwd)
+        logger.info("Chat fijado tras ejecución: %s (%s) en cwd=%s", title, conv_id, job.cwd)
         return title
 
     async def _worker_loop(self):

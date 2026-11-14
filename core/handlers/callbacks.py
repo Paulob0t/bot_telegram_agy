@@ -205,6 +205,33 @@ async def _handle_claude_callbacks(query, data: str) -> bool:
 
 
 async def _handle_chat_guard_callbacks(query, data: str) -> bool:
+    if data.startswith("cg_proj:"):
+        _, hold_id, page_str = data.split(":", 2)
+        view = chat_guard.build_project_picker_view(hold_id, page=int(page_str))
+        if view:
+            markup, text = view
+            await safe_edit(query.message, text, reply_markup=markup)
+        else:
+            await safe_edit(query.message, "⌛ Esta pregunta expiró. Reenvía el mensaje.")
+        return True
+
+    if data.startswith("cg_psel:"):
+        _, hold_id, target_str = data.split(":", 2)
+        if target_str == "HOME":
+            session_state.set_cwd(HOME_DIR)
+        else:
+            projects = list_available_projects()
+            pidx = int(target_str)
+            if 0 <= pidx < len(projects):
+                session_state.set_cwd(projects[pidx][1])
+        view = chat_guard.build_prompt_view(hold_id)
+        if view:
+            markup, text = view
+            await safe_edit(query.message, text, reply_markup=markup)
+        else:
+            await safe_edit(query.message, f"✅ Proyecto cambiado a `{session_state.get_cwd_short_name()}`. Reenvía tu mensaje.")
+        return True
+
     if data.startswith("cg_pick:"):
         _, hold_id, page_str = data.split(":", 2)
         view = chat_guard.build_picker_view(hold_id, page=int(page_str))
@@ -371,9 +398,14 @@ async def _handle_agy_chats_callbacks(query, data: str) -> bool:
             title = get_conversation_title(target)
             session_state.set_conversation(target, f"💬 {title}")
             chat_guard.touch()
+            cwd_short = session_state.get_cwd_short_name()
             await safe_edit(
                 query.message,
-                f"✅ **Chat seleccionado y guardado:**\n**{title}**\n\n*(ID: `{target}`)*\n\nCualquier mensaje que envíes continuará en este hilo.",
+                f"✅ **Chat seleccionado y guardado:**\n"
+                f"• 💬 **Chat:** **{title}**\n"
+                f"• 📂 **Proyecto (`cwd`):** `{cwd_short}`\n"
+                f"• 🆔 **ID:** `{target}`\n\n"
+                f"Cualquier mensaje que envíes continuará en este hilo *(usa `/cd` si quieres cambiar de proyecto)*.",
             )
         return True
 

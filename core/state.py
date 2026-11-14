@@ -59,6 +59,7 @@ class BotSessionState:
         self.current_model: Optional[str] = None  # None = por defecto o ID específico
         self.current_effort: str = "low"  # low, medium, high, xhigh, max
         self.current_cwd: str = HOME_DIR  # Directorio de trabajo activo para AGY
+        self.conversation_cwd_map: Dict[str, str] = {}
         self.features: Dict[str, bool] = _default_features()
         self.updated_at: Optional[float] = None
         self.last_usage_data: dict = {}
@@ -123,7 +124,17 @@ class BotSessionState:
             c_mod = data.get("claude_model", None)
             self.claude_model = str(c_mod).strip() if c_mod else None
 
-            # 5. Restaurar módulos / features habilitados
+            # 5. Restaurar mapa conversation_id -> cwd y módulos / features habilitados
+            raw_cwd_map = data.get("conversation_cwd_map")
+            if isinstance(raw_cwd_map, dict):
+                self.conversation_cwd_map = {
+                    str(k): str(v)
+                    for k, v in raw_cwd_map.items()
+                    if k and isinstance(v, str) and os.path.isdir(v)
+                }
+            else:
+                self.conversation_cwd_map = {}
+
             saved_features = data.get("features")
             defaults = _default_features()
             if isinstance(saved_features, dict):
@@ -180,6 +191,7 @@ class BotSessionState:
                 "current_model": self.current_model,
                 "current_effort": self.current_effort,
                 "current_cwd": self.current_cwd,
+                "conversation_cwd_map": self.conversation_cwd_map,
                 "features": self.features,
                 "updated_at": self.updated_at,
             }
@@ -220,8 +232,26 @@ class BotSessionState:
         if not os.path.isdir(real_path):
             return False
         self.current_cwd = real_path
+        if self.current_engine == "agy" and self.current_conversation_id and self.current_conversation_id not in ("NEW", "LATEST"):
+            self.conversation_cwd_map[self.current_conversation_id] = real_path
         self.save_state()
         return True
+
+    def bind_conversation_cwd(self, conv_id: Optional[str], cwd_path: Optional[str] = None) -> None:
+        if not conv_id or conv_id in ("NEW", "LATEST"):
+            return
+        target = os.path.abspath(cwd_path or self.current_cwd)
+        if os.path.isdir(target):
+            self.conversation_cwd_map[conv_id] = target
+            self.save_state()
+
+    def get_conversation_cwd(self, conv_id: Optional[str]) -> Optional[str]:
+        if not conv_id or conv_id in ("NEW", "LATEST"):
+            return None
+        mapped = self.conversation_cwd_map.get(conv_id)
+        if mapped and os.path.isdir(mapped):
+            return mapped
+        return None
 
     def set_model(self, model_id: Optional[str]):
         if self.current_engine == "claude":
@@ -260,10 +290,20 @@ class BotSessionState:
         self.save_state()
         return True
 
-    def set_conversation(self, conv_id: Optional[str], title: str):
+    def set_conversation(self, conv_id: Optional[str], title: str, cwd: Optional[str] = None):
         self.current_engine = "agy"
         self.current_conversation_id = conv_id
         self.current_conversation_title = title
+        if cwd and os.path.isdir(cwd):
+            self.current_cwd = os.path.abspath(cwd)
+            if conv_id and conv_id not in ("NEW", "LATEST"):
+                self.conversation_cwd_map[conv_id] = self.current_cwd
+        elif conv_id and conv_id not in ("NEW", "LATEST"):
+            mapped = self.get_conversation_cwd(conv_id)
+            if mapped:
+                self.current_cwd = mapped
+            else:
+                self.conversation_cwd_map[conv_id] = self.current_cwd
         self.save_state()
 
     def set_claude_session(self, session_id: Optional[str], title: str, cwd: Optional[str] = None):
