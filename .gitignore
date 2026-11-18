@@ -12,3 +12,7 @@ venv/
 
 # Logs
 *.log
+
+# Go binary & Python venv
+telegram-bot
+.venv/
