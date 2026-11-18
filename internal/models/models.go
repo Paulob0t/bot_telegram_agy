@@ -2,11 +2,13 @@ package models
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"telegram-paulobot/internal/config"
+	"telegram-paulobot/internal/state"
 )
 
 type ModelInfo struct {
@@ -35,22 +37,40 @@ var DefaultCatalog = []ModelInfo{
 	{ID: "gpt-oss-120b-medium", Name: "GPT-OSS 120B (Medium)", Icon: "🤖"},
 }
 
+var ClaudeCatalog = []ModelInfo{
+	{ID: "sonnet", Name: "Claude Sonnet 4.6 (Balanceado)", Icon: "🎯"},
+	{ID: "opus", Name: "Claude Opus 4.6 (Máxima inteligencia)", Icon: "👑"},
+	{ID: "haiku", Name: "Claude Haiku 4.5 (Ultraligero)", Icon: "⚡"},
+}
+
 func PickIconForModel(modelID string) string {
+	for _, m := range DefaultCatalog {
+		if m.ID == modelID && m.Icon != "" {
+			return m.Icon
+		}
+	}
+	for _, m := range ClaudeCatalog {
+		if m.ID == modelID && m.Icon != "" {
+			return m.Icon
+		}
+	}
 	m := strings.ToLower(modelID)
 	switch {
 	case strings.Contains(m, "opus"):
-		return "◆"
+		return "👑"
 	case strings.Contains(m, "hydrogen"):
 		if strings.Contains(m, "xhigh") {
-			return "◈"
+			return "🔥"
 		}
-		return "◇"
-	case strings.Contains(m, "argon"), strings.Contains(m, "sonnet"), strings.Contains(m, "claude"):
-		return "●"
-	case strings.Contains(m, "flash"):
-		return "▸"
+		return "🧬"
+	case strings.Contains(m, "argon"):
+		return "🧪"
+	case strings.Contains(m, "sonnet"), strings.Contains(m, "claude"):
+		return "🎯"
+	case strings.Contains(m, "flash"), strings.Contains(m, "haiku"):
+		return "⚡"
 	default:
-		return "○"
+		return "🤖"
 	}
 }
 
@@ -59,7 +79,7 @@ func GetContextWindowForModel(modelID string) int {
 	switch {
 	case strings.Contains(m, "deepseek"):
 		return 64_000
-	case strings.Contains(m, "claude"), strings.Contains(m, "sonnet"), strings.Contains(m, "opus"):
+	case strings.Contains(m, "claude"), strings.Contains(m, "sonnet"), strings.Contains(m, "opus"), strings.Contains(m, "haiku"):
 		return 200_000
 	case strings.Contains(m, "gpt"):
 		return 128_000
@@ -71,15 +91,66 @@ func GetContextWindowForModel(modelID string) int {
 func GetCLIDefaultModel(cfg *config.Config) string {
 	settingsPath := filepath.Join(cfg.BaseCLIDir, "settings.json")
 	raw, err := os.ReadFile(settingsPath)
-	if err != nil {
-		return ""
+	if err == nil {
+		var data map[string]any
+		if json.Unmarshal(raw, &data) == nil {
+			if m, ok := data["model"].(string); ok && strings.TrimSpace(m) != "" {
+				return strings.TrimSpace(m)
+			}
+		}
 	}
-	var data map[string]any
-	if err := json.Unmarshal(raw, &data); err != nil {
-		return ""
+	return "Gemini 4 Argon (Medium)"
+}
+
+func GetClaudeDefaultModel(cfg *config.Config) string {
+	settingsPath := filepath.Join(cfg.HomeDir, ".claude", "settings.json")
+	raw, err := os.ReadFile(settingsPath)
+	if err == nil {
+		var data map[string]any
+		if json.Unmarshal(raw, &data) == nil {
+			if m, ok := data["model"].(string); ok && strings.TrimSpace(m) != "" {
+				return strings.TrimSpace(m)
+			}
+		}
 	}
-	if m, ok := data["model"].(string); ok {
-		return strings.TrimSpace(m)
+	return "sonnet"
+}
+
+// GetEffectiveModelInfo retorna (nombre_amigable, id_efectivo, ventana_contexto) según el motor y modelo actual.
+func GetEffectiveModelInfo(cfg *config.Config, st *state.BotSessionState) (string, string, int) {
+	if st.CurrentEngine == "claude" {
+		if st.ClaudeModel != "" {
+			for _, m := range ClaudeCatalog {
+				if m.ID == st.ClaudeModel {
+					return fmt.Sprintf("%s %s (`%s`)", m.Icon, m.Name, m.ID), m.ID, 200_000
+				}
+			}
+			return fmt.Sprintf("🟠 `%s`", st.ClaudeModel), st.ClaudeModel, 200_000
+		}
+		defCl := GetClaudeDefaultModel(cfg)
+		for _, m := range ClaudeCatalog {
+			if m.ID == defCl {
+				return fmt.Sprintf("Por defecto Claude CLI: %s %s (`%s`)", m.Icon, m.Name, m.ID), m.ID, 200_000
+			}
+		}
+		return fmt.Sprintf("Por defecto Claude CLI (`%s`)", defCl), defCl, 200_000
 	}
-	return ""
+
+	if st.CurrentModel != "" {
+		for _, m := range DefaultCatalog {
+			if m.ID == st.CurrentModel {
+				return fmt.Sprintf("%s %s (`%s`)", m.Icon, m.Name, m.ID), m.ID, GetContextWindowForModel(m.ID)
+			}
+		}
+		return fmt.Sprintf("`%s`", st.CurrentModel), st.CurrentModel, GetContextWindowForModel(st.CurrentModel)
+	}
+
+	cliDef := GetCLIDefaultModel(cfg)
+	// Buscar si cliDef coincide con el Name o ID de algún modelo del catálogo
+	for _, m := range DefaultCatalog {
+		if strings.EqualFold(m.Name, cliDef) || strings.EqualFold(m.ID, cliDef) {
+			return fmt.Sprintf("Por defecto AGY CLI: %s %s (`%s`)", m.Icon, m.Name, m.ID), m.ID, GetContextWindowForModel(m.ID)
+		}
+	}
+	return fmt.Sprintf("Por defecto AGY CLI: **%s**", cliDef), cliDef, GetContextWindowForModel(cliDef)
 }

@@ -387,13 +387,10 @@ func handleCommand(cfg *config.Config, st *state.BotSessionState, tg *telegram.C
 		if st.CurrentEngine == "claude" {
 			chatLabel = st.ClaudeSessionTitle
 		}
-		mod := st.CurrentModel
-		if mod == "" {
-			mod = "DEFAULT"
-		}
+		effDisp, _, ctxWin := models.GetEffectiveModelInfo(cfg, st)
 		msg := fmt.Sprintf(
-			"◆ **Paulobot Go** · `%s`\n• 💬 **Chat:** `%s`\n• 🤖 **Modelo:** `%s` (`%s`)\n%s\n• ◷ **Uptime:** `%s`",
-			st.CurrentEngine, chatLabel, mod, st.CurrentEffort, summary, up,
+			"◆ **Paulobot Go** · `%s`\n• 💬 **Chat:** `%s`\n• 🤖 **Modelo activo:** %s\n• ⚡ **Esfuerzo:** `%s` · 🪟 `%dk` ctx\n%s\n• ◷ **Uptime:** `%s`",
+			st.CurrentEngine, chatLabel, effDisp, strings.ToUpper(st.CurrentEffort), ctxWin/1000, summary, up,
 		)
 		_, _ = tg.SendMessage(chatID, msg, nil)
 
@@ -452,24 +449,8 @@ func handleCommand(cfg *config.Config, st *state.BotSessionState, tg *telegram.C
 		_, _ = tg.SendMessage(chatID, projects.FormatActiveCWDSummary(st.CurrentCWD), kb)
 
 	case "/model", "/modelo":
-		var rows [][]telegram.InlineButton
-		defMark := "○ "
-		if st.CurrentModel == "" {
-			defMark = "● "
-		}
-		rows = append(rows, []telegram.InlineButton{{Text: defMark + "Default CLI", CallbackData: "mod:DEFAULT"}})
-		for _, m := range models.DefaultCatalog {
-			icon := models.PickIconForModel(m.ID)
-			if st.CurrentModel == m.ID {
-				icon = "●"
-			}
-			rows = append(rows, []telegram.InlineButton{{Text: icon + " " + m.Name, CallbackData: "mod:" + m.ID}})
-		}
-		curMod := st.CurrentModel
-		if curMod == "" {
-			curMod = "DEFAULT"
-		}
-		_, _ = tg.SendMessage(chatID, fmt.Sprintf("◈ **Modelo (%d disponibles):** `%s` · Esfuerzo: `%s`", len(models.DefaultCatalog), curMod, st.CurrentEffort), &telegram.InlineKeyboard{InlineKeyboard: rows})
+		msg, kb := buildModelsView(cfg, st)
+		_, _ = tg.SendMessage(chatID, msg, kb)
 
 	case "/effort", "/esfuerzo":
 		effs := []string{"low", "medium", "high", "xhigh"}
@@ -525,6 +506,69 @@ func handleCommand(cfg *config.Config, st *state.BotSessionState, tg *telegram.C
 	case "/stop", "/cancel", "/cancelar":
 		cancelActiveExecution(tg, chatID, false)
 	}
+}
+
+func buildModelsView(cfg *config.Config, st *state.BotSessionState) (string, *telegram.InlineKeyboard) {
+	effDisp, _, ctxWin := models.GetEffectiveModelInfo(cfg, st)
+	var rows [][]telegram.InlineButton
+
+	if st.CurrentEngine == "claude" {
+		cliDef := models.GetClaudeDefaultModel(cfg)
+		defPrefix := "🔄 "
+		if st.ClaudeModel == "" {
+			defPrefix = "✅ "
+		}
+		rows = append(rows, []telegram.InlineButton{
+			{Text: fmt.Sprintf("%sPor defecto Claude CLI (%s)", defPrefix, cliDef), CallbackData: "mod:DEFAULT"},
+		})
+		for _, m := range models.ClaudeCatalog {
+			prefix := m.Icon + " "
+			if st.ClaudeModel == m.ID {
+				prefix = "✅ "
+			}
+			rows = append(rows, []telegram.InlineButton{
+				{Text: prefix + m.Name, CallbackData: "mod:" + m.ID},
+			})
+		}
+		msg := fmt.Sprintf(
+			"🟠 **Selector de Modelo (Claude Code CLI)**\n\n"+
+				"• 📌 **En uso ahora:** %s\n"+
+				"• ⚡ **Esfuerzo:** `%s`\n"+
+				"• 🪟 **Ventana de contexto:** `%dk` tokens\n\n"+
+				"*Toca un modelo para cambiarlo:*",
+			effDisp, strings.ToUpper(st.CurrentEffort), ctxWin/1000,
+		)
+		return msg, &telegram.InlineKeyboard{InlineKeyboard: rows}
+	}
+
+	cliDef := models.GetCLIDefaultModel(cfg)
+	defPrefix := "🔄 "
+	if st.CurrentModel == "" {
+		defPrefix = "✅ "
+	}
+	rows = append(rows, []telegram.InlineButton{
+		{Text: fmt.Sprintf("%sPor defecto CLI (%s)", defPrefix, cliDef), CallbackData: "mod:DEFAULT"},
+	})
+	for _, m := range models.DefaultCatalog {
+		prefix := m.Icon + " "
+		if st.CurrentModel == m.ID || (st.CurrentModel == "" && strings.EqualFold(m.Name, cliDef)) {
+			if st.CurrentModel == m.ID {
+				prefix = "✅ "
+			}
+		}
+		rows = append(rows, []telegram.InlineButton{
+			{Text: prefix + m.Name, CallbackData: "mod:" + m.ID},
+		})
+	}
+	msg := fmt.Sprintf(
+		"🤖 **Selector de Modelo (Antigravity AGY)**\n\n"+
+			"• 📌 **En uso ahora:** %s\n"+
+			"• ⚡ **Esfuerzo:** `%s`\n"+
+			"• 🪟 **Ventana de contexto:** `%dk` tokens\n\n"+
+			"*Toca un modelo de la lista para activarlo:*",
+		effDisp, strings.ToUpper(st.CurrentEffort), ctxWin/1000,
+	)
+	return msg, &telegram.InlineKeyboard{InlineKeyboard: rows}
 }
 
 func buildProjectsKeyboard(cfg *config.Config, activeCWD, prefix string) *telegram.InlineKeyboard {
@@ -905,21 +949,23 @@ func handleCallback(cfg *config.Config, st *state.BotSessionState, tg *telegram.
 		if mod == "DEFAULT" {
 			mod = ""
 		}
-		st.CurrentModel = mod
-		for _, eff := range []string{"xhigh", "low", "medium", "high"} {
-			if strings.HasSuffix(strings.ToLower(mod), "-"+eff) {
-				st.CurrentEffort = eff
-				break
+		if st.CurrentEngine == "claude" {
+			st.ClaudeModel = mod
+		} else {
+			st.CurrentModel = mod
+			for _, eff := range []string{"xhigh", "low", "medium", "high"} {
+				if strings.HasSuffix(strings.ToLower(mod), "-"+eff) {
+					st.CurrentEffort = eff
+					break
+				}
 			}
 		}
 		_ = st.Save()
-		disp := mod
-		if disp == "" {
-			disp = "DEFAULT"
-		}
-		tg.AnswerCallback(cb.ID, "Modelo: "+disp)
+		effDisp, _, _ := models.GetEffectiveModelInfo(cfg, st)
+		tg.AnswerCallback(cb.ID, "Modelo actualizado")
 		if cb.Message != nil {
-			tg.EditMessage(cb.Message.Chat.ID, cb.Message.MessageID, fmt.Sprintf("✓ **Modelo:** `%s` · Esfuerzo: `%s`", disp, st.CurrentEffort), nil)
+			msg, kb := buildModelsView(cfg, st)
+			tg.EditMessage(cb.Message.Chat.ID, cb.Message.MessageID, fmt.Sprintf("✅ **Modelo cambiado a:** %s\n\n%s", effDisp, msg), kb)
 		}
 
 	case strings.HasPrefix(data, "eff:"):
