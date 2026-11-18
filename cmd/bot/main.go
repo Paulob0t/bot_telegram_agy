@@ -498,17 +498,13 @@ func handleCommand(cfg *config.Config, st *state.BotSessionState, tg *telegram.C
 
 	case "/tokens", "/usage", "/consumo":
 		q := tokens.FetchAll(cfg)
-		g := q.Antigravity["gemini"]
-		c := q.Antigravity["claude_gpt"]
-		a := q.Antigravity["argon"]
-		msg := fmt.Sprintf(
-			"◈ **Cuotas de IA**\n▸ **Claude**: 5h `%.0f%%` usado · Sem `%.0f%%` usado\n◆ **Gemini**: 5h `%.0f%%` libre · Sem `%.0f%%` libre\n◇ **Claude/GPT**: 5h `%.0f%%` libre · Sem `%.0f%%` libre\n● **Argon**: Sem `%.0f%%` libre",
-			q.ClaudeCode.SessionUsedPct, q.ClaudeCode.WeekUsedPct,
-			g.RemainingPct, g.WeekPct,
-			c.RemainingPct, c.WeekPct,
-			a.WeekPct,
-		)
-		_, _ = tg.SendMessage(chatID, msg, nil)
+		_ = tokens.WriteWaybarJSON(cfg)
+		kb := &telegram.InlineKeyboard{
+			InlineKeyboard: [][]telegram.InlineButton{
+				{{Text: "🔄 Sincronizar en vivo", CallbackData: "tok_sync"}},
+			},
+		}
+		_, _ = tg.SendMessage(chatID, tokens.FormatTelegramDashboard(q), kb)
 
 	case "/obsidian", "/prompts", "/vault", "/notas":
 		notes := obsidian.ListMarkdownNotes(cfg, 10)
@@ -655,6 +651,19 @@ func cancelActiveExecution(tg *telegram.Client, chatID int64, clearAll bool) {
 func handleCallback(cfg *config.Config, st *state.BotSessionState, tg *telegram.Client, cg *guard.ChatGuard, cb *telegram.CallbackQuery) {
 	data := cb.Data
 	switch {
+	case data == "tok_sync":
+		tg.AnswerCallback(cb.ID, "Sincronizando cuotas…")
+		q := tokens.FetchAll(cfg)
+		_ = tokens.WriteWaybarJSON(cfg)
+		kb := &telegram.InlineKeyboard{
+			InlineKeyboard: [][]telegram.InlineButton{
+				{{Text: "🔄 Sincronizar en vivo", CallbackData: "tok_sync"}},
+			},
+		}
+		if cb.Message != nil {
+			tg.EditMessage(cb.Message.Chat.ID, cb.Message.MessageID, tokens.FormatTelegramDashboard(q), kb)
+		}
+
 	case data == "q_cancel":
 		tg.AnswerCallback(cb.ID, "Cancelando…")
 		if cb.Message != nil {
