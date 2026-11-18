@@ -75,9 +75,20 @@ func Load(projectRoot string) (*Config, error) {
 func loadDotenvFiles(projectRoot string) {
 	envName := envOr("BOT_ENV_FILE", ".env")
 	home := userHome()
+	exeDir := ""
+	if exe, err := os.Executable(); err == nil {
+		if realExe, err := filepath.EvalSymlinks(exe); err == nil {
+			exeDir = filepath.Dir(realExe)
+		} else {
+			exeDir = filepath.Dir(exe)
+		}
+	}
 	candidates := []string{
 		filepath.Join(projectRoot, envName),
 		filepath.Join(projectRoot, ".env"),
+		filepath.Join(exeDir, envName),
+		filepath.Join(exeDir, ".env"),
+		"/mnt/datos/Projects/telegram-paulobot/.env",
 		filepath.Join(home, ".config", "telegram-bot", ".env"),
 	}
 	for _, p := range candidates {

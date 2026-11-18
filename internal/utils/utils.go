@@ -58,5 +58,53 @@ func SanitizeStreamingMarkdown(text string, maxLen int) string {
 		}
 		text += "```"
 	}
+	// Balancear backticks simples o negritas abiertas fuera de fences
+	lastFence := strings.LastIndex(text, "```")
+	tail := text
+	if lastFence != -1 {
+		tail = text[lastFence+3:]
+	}
+	if strings.Count(tail, "`")%2 == 1 {
+		text += "`"
+		return text
+	}
+	if strings.Count(tail, "**")%2 == 1 {
+		text += "**"
+	} else if strings.Count(strings.ReplaceAll(tail, "**", ""), "*")%2 == 1 {
+		text += "*"
+	}
 	return text
+}
+
+// SplitMarkdownChunks divide respuestas largas en bloques <= maxChars cerrando fences ``` si quedan abiertos.
+func SplitMarkdownChunks(text string, maxChars int) []string {
+	if maxChars <= 0 {
+		maxChars = 3850
+	}
+	runes := []rune(text)
+	if len(runes) <= maxChars {
+		return []string{text}
+	}
+	var chunks []string
+	for len(runes) > 0 {
+		if len(runes) <= maxChars {
+			chunks = append(chunks, string(runes))
+			break
+		}
+		cut := maxChars
+		for i := maxChars; i > maxChars-600 && i > 0; i-- {
+			if runes[i-1] == '\n' {
+				cut = i
+				break
+			}
+		}
+		part := string(runes[:cut])
+		runes = runes[cut:]
+		if strings.Count(part, "```")%2 == 1 {
+			part += "\n```"
+			runes = append([]rune("```\n"), runes...)
+		}
+		chunks = append(chunks, strings.TrimSpace(part))
+	}
+	return chunks
 }

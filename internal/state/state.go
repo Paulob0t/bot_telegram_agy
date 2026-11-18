@@ -151,3 +151,94 @@ func (s *BotSessionState) FeatureEnabled(key string) bool {
 	v, ok := s.Features[key]
 	return ok && v
 }
+
+func (s *BotSessionState) ToggleFeature(key string) bool {
+	s.mu.Lock()
+	cur := s.Features[key]
+	next := !cur
+	s.Features[key] = next
+	if key == "claude" && !next && s.CurrentEngine == "claude" {
+		s.CurrentEngine = "agy"
+	}
+	s.mu.Unlock()
+	_ = s.Save()
+	return next
+}
+
+func (s *BotSessionState) SetCWD(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || !info.IsDir() {
+		return false
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		abs = path
+	}
+	s.mu.Lock()
+	s.CurrentCWD = abs
+	if s.CurrentEngine == "agy" && s.CurrentConversationID != "" && s.CurrentConversationID != "NEW" && s.CurrentConversationID != "LATEST" {
+		if s.ConversationCWDMap == nil {
+			s.ConversationCWDMap = make(map[string]string)
+		}
+		s.ConversationCWDMap[s.CurrentConversationID] = abs
+	}
+	s.mu.Unlock()
+	_ = s.Save()
+	return true
+}
+
+func (s *BotSessionState) SetAgyConversation(convID, title, cwd string) {
+	s.mu.Lock()
+	s.CurrentEngine = "agy"
+	s.CurrentConversationID = convID
+	s.CurrentConversationTitle = title
+	if s.ConversationCWDMap == nil {
+		s.ConversationCWDMap = make(map[string]string)
+	}
+	if cwd != "" {
+		if info, err := os.Stat(cwd); err == nil && info.IsDir() {
+			s.CurrentCWD = cwd
+			if convID != "" && convID != "NEW" && convID != "LATEST" {
+				s.ConversationCWDMap[convID] = cwd
+			}
+		}
+	} else if convID != "" && convID != "NEW" && convID != "LATEST" {
+		if mapped, ok := s.ConversationCWDMap[convID]; ok {
+			if info, err := os.Stat(mapped); err == nil && info.IsDir() {
+				s.CurrentCWD = mapped
+			}
+		} else {
+			s.ConversationCWDMap[convID] = s.CurrentCWD
+		}
+	}
+	s.mu.Unlock()
+	_ = s.Save()
+}
+
+func (s *BotSessionState) SetClaudeSession(sessionID, title, cwd string) {
+	s.mu.Lock()
+	s.CurrentEngine = "claude"
+	s.ClaudeSessionID = sessionID
+	s.ClaudeSessionTitle = title
+	if cwd != "" {
+		if info, err := os.Stat(cwd); err == nil && info.IsDir() {
+			s.CurrentCWD = cwd
+		}
+	}
+	s.mu.Unlock()
+	_ = s.Save()
+}
+
+func (s *BotSessionState) GetCWDShortName(cwd string) string {
+	if cwd == "" {
+		cwd = s.CurrentCWD
+	}
+	if filepath.Clean(cwd) == filepath.Clean(s.cfg.HomeDir) {
+		return "~ (" + s.cfg.HomeDir + ")"
+	}
+	base := filepath.Base(cwd)
+	if base == "" || base == "." {
+		return cwd
+	}
+	return base
+}

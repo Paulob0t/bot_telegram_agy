@@ -4,16 +4,16 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python -u /run/media/paulobot/Datos/Projects/telegram-paulobot/bot.py
-WorkingDirectory=/run/media/paulobot/Datos/Projects/telegram-paulobot
+ExecStart=/mnt/datos/Projects/telegram-paulobot/telegram-bot
+WorkingDirectory=/mnt/datos/Projects/telegram-paulobot
 Restart=on-failure
-RestartSec=3
+RestartSec=5
 MemoryHigh=600M
 MemoryMax=1200M
 OOMPolicy=continue
-Environment=PATH=/home/paulobot/.local/bin:/home/paulobot/.gemini/antigravity-cli/bin:/usr/local/sbin:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=/home/paulobot/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=HOME=/home/paulobot
-EnvironmentFile=-/run/media/paulobot/Datos/Projects/telegram-paulobot/.env
+EnvironmentFile=-/mnt/datos/Projects/telegram-paulobot/.env
 StandardOutput=append:/home/paulobot/.local/state/telegram-bot.log
 StandardError=append:/home/paulobot/.local/state/telegram-bot.log
 
