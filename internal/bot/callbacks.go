@@ -543,11 +543,17 @@ func (a *App) handleSystemCallback(cb *telegram.CallbackQuery, data string) bool
 			}
 		}
 		_ = a.State.Save()
-		effDisp, _, _ := models.GetEffectiveModelInfo(a.Cfg, a.State)
+		effDisp, _, ctxWin := models.GetEffectiveModelInfo(a.Cfg, a.State)
 		a.TG.AnswerCallback(cb.ID, "Modelo actualizado")
 		if cb.Message != nil {
-			msg, kb := a.buildModelsView()
-			a.TG.EditMessage(cb.Message.Chat.ID, cb.Message.MessageID, fmt.Sprintf("✅ **Modelo cambiado a:** %s\n\n%s", effDisp, msg), kb)
+			summary := fmt.Sprintf(
+				"✅ **Modelo configurado y guardado:**\n\n"+
+					"• 🤖 **Modelo activo:** %s\n"+
+					"• ⚡ **Esfuerzo sincronizado:** `%s`\n"+
+					"• 🪟 **Ventana de contexto:** `%dk` tokens",
+				effDisp, strings.ToUpper(a.State.CurrentEffort), ctxWin/1000,
+			)
+			a.TG.EditMessage(cb.Message.Chat.ID, cb.Message.MessageID, summary, nil)
 		}
 		return true
 

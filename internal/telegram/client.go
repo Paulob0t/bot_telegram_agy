@@ -133,6 +133,8 @@ func (c *Client) EditMessage(chatID, msgID int64, text string, kb *InlineKeyboar
 	}
 	if kb != nil {
 		payload["reply_markup"] = kb
+	} else {
+		payload["reply_markup"] = InlineKeyboard{InlineKeyboard: [][]InlineButton{}}
 	}
 	if _, err := c.postJSON("editMessageText", payload); err != nil {
 		delete(payload, "parse_mode")
