@@ -31,6 +31,7 @@ import (
 )
 
 type queuedJob struct {
+	id      string
 	chatID  int64
 	prompt  string
 	temp    []string
@@ -314,7 +315,8 @@ func buildChatGuardView(st *state.BotSessionState, holdID, prompt, reason string
 
 func enqueuePrompt(cfg *config.Config, st *state.BotSessionState, tg *telegram.Client, chatID int64, prompt string, tempFiles []string) {
 	runMu.Lock()
-	job := queuedJob{chatID: chatID, prompt: prompt, temp: tempFiles}
+	jobID := fmt.Sprintf("%x", time.Now().UnixNano()&0xffffffff)
+	job := queuedJob{id: jobID, chatID: chatID, prompt: prompt, temp: tempFiles}
 	if isBusy {
 		pos := len(jobQueue) + 1
 		preview := strings.Join(strings.Fields(prompt), " ")
@@ -323,7 +325,13 @@ func enqueuePrompt(cfg *config.Config, st *state.BotSessionState, tg *telegram.C
 		}
 		kb := &telegram.InlineKeyboard{
 			InlineKeyboard: [][]telegram.InlineButton{
-				{{Text: "🛑 Cancelar todo", CallbackData: "q_cancel_all"}},
+				{
+					{Text: "⚡ Interrumpir y ejecutar ya", CallbackData: "q_force:" + jobID},
+					{Text: "🗑️ Quitar de cola", CallbackData: "q_drop:" + jobID},
+				},
+				{
+					{Text: "🛑 Cancelar todo", CallbackData: "q_cancel_all"},
+				},
 			},
 		}
 		noticeID, _ := tg.SendMessage(
@@ -387,6 +395,9 @@ func executeJob(cfg *config.Config, st *state.BotSessionState, tg *telegram.Clie
 	defer cancel()
 
 	out, err := executor.RunPrompt(ctx, cfg, st, job.prompt, func(partial string) {
+		if ctx.Err() != nil {
+			return
+		}
 		if msgID != 0 {
 			tg.EditMessage(job.chatID, msgID, utils.SanitizeStreamingMarkdown(partial, 3750), cancelKB)
 		}
@@ -813,7 +824,7 @@ func handleCallback(cfg *config.Config, st *state.BotSessionState, tg *telegram.
 		}
 
 	case data == "q_cancel":
-		tg.AnswerCallback(cb.ID, "Cancelando…")
+		tg.AnswerCallback(cb.ID, "Cancelando árbol de procesos…")
 		if cb.Message != nil {
 			cancelActiveExecution(tg, cb.Message.Chat.ID, false)
 		}
@@ -822,6 +833,46 @@ func handleCallback(cfg *config.Config, st *state.BotSessionState, tg *telegram.
 		tg.AnswerCallback(cb.ID, "Cancelando todo…")
 		if cb.Message != nil {
 			cancelActiveExecution(tg, cb.Message.Chat.ID, true)
+		}
+
+	case strings.HasPrefix(data, "q_force:"):
+		jobID := strings.TrimPrefix(data, "q_force:")
+		runMu.Lock()
+		foundIdx := -1
+		for i, j := range jobQueue {
+			if j.id == jobID {
+				foundIdx = i
+				break
+			}
+		}
+		if foundIdx >= 0 {
+			target := jobQueue[foundIdx]
+			jobQueue = append(jobQueue[:foundIdx], jobQueue[foundIdx+1:]...)
+			jobQueue = append([]queuedJob{target}, jobQueue...)
+		}
+		cancelFn := runCancel
+		runMu.Unlock()
+
+		if cancelFn != nil {
+			cancelFn()
+		}
+		tg.AnswerCallback(cb.ID, "Interrumpiendo tarea actual…")
+
+	case strings.HasPrefix(data, "q_drop:"):
+		jobID := strings.TrimPrefix(data, "q_drop:")
+		runMu.Lock()
+		removed := false
+		for i, j := range jobQueue {
+			if j.id == jobID {
+				jobQueue = append(jobQueue[:i], jobQueue[i+1:]...)
+				removed = true
+				break
+			}
+		}
+		runMu.Unlock()
+		tg.AnswerCallback(cb.ID, "Retirado de la cola")
+		if removed && cb.Message != nil {
+			tg.EditMessage(cb.Message.Chat.ID, cb.Message.MessageID, "🗑️ **Mensaje retirado de la cola.**", nil)
 		}
 
 	case strings.HasPrefix(data, "up_ai:"):

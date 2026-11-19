@@ -115,6 +115,7 @@ func RunPrompt(ctx context.Context, cfg *config.Config, st *state.BotSessionStat
 		select {
 		case <-ctx.Done():
 			killProcessTree(cmd)
+			_ = stdout.Close()
 		case <-doneCh:
 		}
 	}()
@@ -235,7 +236,22 @@ func RunPrompt(ctx context.Context, cfg *config.Config, st *state.BotSessionStat
 	}
 
 	close(doneCh)
-	waitErr := cmd.Wait()
+	waitCh := make(chan error, 1)
+	go func() {
+		waitCh <- cmd.Wait()
+	}()
+
+	var waitErr error
+	if ctx.Err() != nil {
+		select {
+		case waitErr = <-waitCh:
+		case <-time.After(250 * time.Millisecond):
+			killProcessTree(cmd)
+			waitErr = ctx.Err()
+		}
+		return strings.TrimSpace(accumulated.String()), waitErr
+	}
+	waitErr = <-waitCh
 
 	// Fijar conversación AGY y asociarla a su proyecto (cwd)
 	if !isClaude {
