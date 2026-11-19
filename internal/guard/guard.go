@@ -2,6 +2,8 @@ package guard
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -10,6 +12,18 @@ type HeldPrompt struct {
 	ID        string
 	ChatID    int64
 	Prompt    string
+	TempFiles []string
+	CreatedAt time.Time
+}
+
+type PendingUpload struct {
+	ID        string
+	ChatID    int64
+	FilePath  string
+	FileName  string
+	Caption   string
+	IsPDF     bool
+	IsPhoto   bool
 	CreatedAt time.Time
 }
 
@@ -18,6 +32,8 @@ type ChatGuard struct {
 	lastActivity time.Time
 	idleLimit    time.Duration
 	held         map[string]HeldPrompt
+	uploads      map[string]PendingUpload
+	seq          uint64
 }
 
 func New(idleMinutes float64) *ChatGuard {
@@ -29,6 +45,7 @@ func New(idleMinutes float64) *ChatGuard {
 		lastActivity: time.Time{},
 		idleLimit:    time.Duration(idleMinutes * float64(time.Minute)),
 		held:         make(map[string]HeldPrompt),
+		uploads:      make(map[string]PendingUpload),
 	}
 }
 
@@ -64,7 +81,7 @@ func (g *ChatGuard) NeedsConfirmation(enabled bool, engine, convID, claudeID str
 	return true, fmt.Sprintf("%dm inactivo", mins)
 }
 
-func (g *ChatGuard) Hold(chatID int64, prompt string) string {
+func (g *ChatGuard) Hold(chatID int64, prompt string, tempFiles ...string) string {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -74,11 +91,13 @@ func (g *ChatGuard) Hold(chatID int64, prompt string) string {
 			delete(g.held, k)
 		}
 	}
-	id := fmt.Sprintf("%x", now.UnixNano()&0xffffffff)
+	g.seq++
+	id := fmt.Sprintf("%x%x", now.UnixNano()&0xfffffff, g.seq&0xff)
 	g.held[id] = HeldPrompt{
 		ID:        id,
 		ChatID:    chatID,
 		Prompt:    prompt,
+		TempFiles: append([]string(nil), tempFiles...),
 		CreatedAt: now,
 	}
 	return id
@@ -99,4 +118,58 @@ func (g *ChatGuard) Pop(id string) (HeldPrompt, bool) {
 		delete(g.held, id)
 	}
 	return h, ok
+}
+
+func (g *ChatGuard) HoldUpload(u PendingUpload) string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	now := time.Now()
+	for k, v := range g.uploads {
+		if now.Sub(v.CreatedAt) > 12*time.Hour {
+			delete(g.uploads, k)
+		}
+	}
+	g.seq++
+	id := fmt.Sprintf("%x%x", now.UnixNano()&0xfffffff, g.seq&0xff)
+	u.ID = id
+	u.CreatedAt = now
+	g.uploads[id] = u
+	return id
+}
+
+func (g *ChatGuard) GetUpload(id string) (PendingUpload, bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	u, ok := g.uploads[id]
+	return u, ok
+}
+
+func (g *ChatGuard) PopUpload(id string) (PendingUpload, bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	u, ok := g.uploads[id]
+	if ok {
+		delete(g.uploads, id)
+	}
+	return u, ok
+}
+
+// PrepareUploadsDir devuelve ~/.cache/telegram-paulobot/uploads y borra archivos con más de 24h.
+func PrepareUploadsDir(homeDir string) string {
+	dir := filepath.Join(homeDir, ".cache", "telegram-paulobot", "uploads")
+	_ = os.MkdirAll(dir, 0o755)
+	entries, err := os.ReadDir(dir)
+	if err == nil {
+		cutoff := time.Now().Add(-24 * time.Hour)
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			if info, err := e.Info(); err == nil && info.ModTime().Before(cutoff) {
+				_ = os.Remove(filepath.Join(dir, e.Name()))
+			}
+		}
+	}
+	return dir
 }

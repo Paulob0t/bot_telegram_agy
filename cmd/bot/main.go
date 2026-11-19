@@ -132,56 +132,78 @@ func main() {
 			}
 
 			text := strings.TrimSpace(u.Message.Text)
-			if text == "" {
-				text = strings.TrimSpace(u.Message.Caption)
-			}
+			caption := strings.TrimSpace(u.Message.Caption)
 
-			// Descargar foto o documento adjunto si viene en el mensaje
-			var tempFiles []string
+			// 1. Foto recibida desde Telegram -> PC
 			if len(u.Message.Photo) > 0 {
 				best := u.Message.Photo[len(u.Message.Photo)-1]
-				tmpImg := filepath.Join(os.TempDir(), fmt.Sprintf("tg_photo_%s.jpg", best.FileUniqueID))
-				if err := tg.DownloadFile(best.FileID, tmpImg); err == nil {
-					tempFiles = append(tempFiles, tmpImg)
-					if text != "" {
-						text = fmt.Sprintf("[Foto adjunta guardada en: %s]\n\n%s", tmpImg, text)
-					} else {
-						text = fmt.Sprintf("[Foto adjunta guardada en: %s]\nPor favor analiza esta imagen.", tmpImg)
-					}
+				uploadsDir := guard.PrepareUploadsDir(cfg.HomeDir)
+				fn := fmt.Sprintf("foto_%s_%s.jpg", time.Now().Format("20060102_150405"), best.FileUniqueID)
+				destImg := filepath.Join(uploadsDir, fn)
+				if err := tg.DownloadFile(best.FileID, destImg); err != nil {
+					_, _ = tg.SendMessage(u.Message.Chat.ID, fmt.Sprintf("✕ Error descargando foto: `%v`", err), nil)
+					continue
 				}
+				if caption != "" {
+					prompt := fmt.Sprintf("[Foto adjunta guardada en: %s]\n\n%s", destImg, caption)
+					submitWithGuard(cfg, st, tg, cg, u.Message.Chat.ID, prompt, []string{destImg})
+				} else {
+					upID := cg.HoldUpload(guard.PendingUpload{
+						ChatID:   u.Message.Chat.ID,
+						FilePath: destImg,
+						FileName: fn,
+						IsPhoto:  true,
+					})
+					up, _ := cg.GetUpload(upID)
+					msg, kb := buildUploadActionView(cfg, st, up)
+					_, _ = tg.SendMessage(u.Message.Chat.ID, msg, kb)
+				}
+				continue
 			}
+
+			// 2. PDF o documento recibido desde Telegram -> PC
 			if u.Message.Document != nil {
 				doc := u.Message.Document
-				fn := filepath.Base(doc.FileName)
+				uploadsDir := guard.PrepareUploadsDir(cfg.HomeDir)
+				fn := strings.ReplaceAll(filepath.Base(doc.FileName), " ", "_")
 				if fn == "" || fn == "." {
-					fn = "doc_" + doc.FileUniqueID
+					fn = "archivo_" + doc.FileUniqueID
 				}
-				tmpDoc := filepath.Join(os.TempDir(), fmt.Sprintf("tg_doc_%s_%s", doc.FileUniqueID, fn))
-				if err := tg.DownloadFile(doc.FileID, tmpDoc); err == nil {
-					tempFiles = append(tempFiles, tmpDoc)
-					if text != "" {
-						text = fmt.Sprintf("[Archivo adjunto: %s]\n\n%s", tmpDoc, text)
-					} else {
-						text = fmt.Sprintf("[Archivo adjunto: %s]\nRevisa este archivo.", tmpDoc)
-					}
+				destDoc := filepath.Join(uploadsDir, fmt.Sprintf("%s_%s", doc.FileUniqueID, fn))
+				if err := tg.DownloadFile(doc.FileID, destDoc); err != nil {
+					_, _ = tg.SendMessage(u.Message.Chat.ID, fmt.Sprintf("✕ Error descargando archivo: `%v`", err), nil)
+					continue
 				}
+				ext := strings.ToLower(filepath.Ext(fn))
+				isPDF := ext == ".pdf" || strings.EqualFold(doc.MimeType, "application/pdf")
+				upID := cg.HoldUpload(guard.PendingUpload{
+					ChatID:   u.Message.Chat.ID,
+					FilePath: destDoc,
+					FileName: fn,
+					Caption:  caption,
+					IsPDF:    isPDF,
+				})
+				up, _ := cg.GetUpload(upID)
+				msg, kb := buildUploadActionView(cfg, st, up)
+				_, _ = tg.SendMessage(u.Message.Chat.ID, msg, kb)
+				continue
 			}
 
 			if text == "" {
 				continue
 			}
 
-			if strings.HasPrefix(text, "/") && len(tempFiles) == 0 {
+			if strings.HasPrefix(text, "/") {
 				handleCommand(cfg, st, tg, cg, u.Message.Chat.ID, text)
 				continue
 			}
 
-			if st.FeatureEnabled("long_buffer") && len(tempFiles) == 0 {
+			if st.FeatureEnabled("long_buffer") {
 				if ready, ok := msgBuf.Push(text); ok {
 					submitWithGuard(cfg, st, tg, cg, u.Message.Chat.ID, ready, nil)
 				}
 			} else {
-				submitWithGuard(cfg, st, tg, cg, u.Message.Chat.ID, text, tempFiles)
+				submitWithGuard(cfg, st, tg, cg, u.Message.Chat.ID, text, nil)
 			}
 		}
 	}
@@ -200,9 +222,56 @@ func submitWithGuard(cfg *config.Config, st *state.BotSessionState, tg *telegram
 		return
 	}
 
-	holdID := cg.Hold(chatID, prompt)
+	holdID := cg.Hold(chatID, prompt, tempFiles...)
 	text, kb := buildChatGuardView(st, holdID, prompt, reason)
 	_, _ = tg.SendMessage(chatID, text, kb)
+}
+
+func buildUploadActionView(cfg *config.Config, st *state.BotSessionState, up guard.PendingUpload) (string, *telegram.InlineKeyboard) {
+	cwdShort := st.GetCWDShortName(st.CurrentCWD)
+	kind := "📄 Archivo"
+	if up.IsPhoto {
+		kind = "🖼️ Foto"
+	} else if up.IsPDF {
+		kind = "📕 PDF"
+	}
+
+	var rows [][]telegram.InlineButton
+	rows = append(rows, []telegram.InlineButton{
+		{Text: fmt.Sprintf("🤖 Analizar con IA (%s)", cwdShort), CallbackData: "up_ai:" + up.ID},
+	})
+	rows = append(rows, []telegram.InlineButton{
+		{Text: fmt.Sprintf("📂 Guardar en %s", cwdShort), CallbackData: "up_cwd:" + up.ID},
+		{Text: "📁 Otro proyecto…", CallbackData: "up_pask:" + up.ID},
+	})
+	rows = append(rows, []telegram.InlineButton{
+		{Text: "📥 Guardar en ~/Downloads", CallbackData: "up_dl:" + up.ID},
+	})
+
+	if up.IsPDF && st.FeatureEnabled("obsidian") {
+		for _, vp := range obsidian.ListVaultProjects(cfg) {
+			rows = append(rows, []telegram.InlineButton{
+				{Text: fmt.Sprintf("📒 Obsidian %s/PDF (0 tokens)", vp.Name), CallbackData: fmt.Sprintf("up_obs:%s:%s:save", up.ID, vp.Name)},
+			})
+			rows = append(rows, []telegram.InlineButton{
+				{Text: fmt.Sprintf("⚡ %s: Guardar + Generar Prompts Wicode", vp.Name), CallbackData: fmt.Sprintf("up_obs:%s:%s:gen", up.ID, vp.Name)},
+			})
+		}
+	}
+
+	rows = append(rows, []telegram.InlineButton{
+		{Text: "🗑️ Descartar archivo", CallbackData: "up_drop:" + up.ID},
+	})
+
+	msg := fmt.Sprintf(
+		"%s **recibido en tu PC:** `%s`\n• 📂 **Proyecto activo (`cwd`):** `%s`\n• 💾 **Caché 24h:** `%s`",
+		kind, up.FileName, cwdShort, up.FilePath,
+	)
+	if up.Caption != "" {
+		msg += fmt.Sprintf("\n• 📝 **Nota:** `%s`", up.Caption)
+	}
+	msg += "\n\n*¿Qué quieres hacer con este archivo?*"
+	return msg, &telegram.InlineKeyboard{InlineKeyboard: rows}
 }
 
 func buildChatGuardView(st *state.BotSessionState, holdID, prompt, reason string) (string, *telegram.InlineKeyboard) {
@@ -292,12 +361,6 @@ func workerLoop(cfg *config.Config, st *state.BotSessionState, tg *telegram.Clie
 }
 
 func executeJob(cfg *config.Config, st *state.BotSessionState, tg *telegram.Client, job queuedJob) {
-	defer func() {
-		for _, tf := range job.temp {
-			_ = os.Remove(tf)
-		}
-	}()
-
 	cwdShort := st.GetCWDShortName(st.CurrentCWD)
 	chatTitle := st.CurrentConversationTitle
 	if st.CurrentEngine == "claude" {
@@ -761,6 +824,179 @@ func handleCallback(cfg *config.Config, st *state.BotSessionState, tg *telegram.
 			cancelActiveExecution(tg, cb.Message.Chat.ID, true)
 		}
 
+	case strings.HasPrefix(data, "up_ai:"):
+		upID := strings.TrimPrefix(data, "up_ai:")
+		up, ok := cg.PopUpload(upID)
+		if !ok {
+			tg.AnswerCallback(cb.ID, "Archivo expirado, reenvíalo")
+			return
+		}
+		instruction := up.Caption
+		if instruction == "" {
+			if up.IsPhoto {
+				instruction = "Por favor analiza esta imagen."
+			} else {
+				instruction = "Revisa y analiza este archivo."
+			}
+		}
+		prompt := fmt.Sprintf("[Archivo adjunto guardado en: %s]\n\n%s", up.FilePath, instruction)
+		tg.AnswerCallback(cb.ID, "Analizando con IA…")
+		if cb.Message != nil {
+			tg.EditMessage(cb.Message.Chat.ID, cb.Message.MessageID, fmt.Sprintf("🤖 **Enviando `%s` a IA** • 📂 `%s`", up.FileName, st.GetCWDShortName(st.CurrentCWD)), nil)
+		}
+		submitWithGuard(cfg, st, tg, cg, up.ChatID, prompt, []string{up.FilePath})
+
+	case strings.HasPrefix(data, "up_cwd:"):
+		upID := strings.TrimPrefix(data, "up_cwd:")
+		up, ok := cg.PopUpload(upID)
+		if !ok {
+			tg.AnswerCallback(cb.ID, "Archivo expirado, reenvíalo")
+			return
+		}
+		dest, err := obsidian.SaveFileToDir(up.FilePath, st.CurrentCWD, up.FileName)
+		if err != nil {
+			tg.AnswerCallback(cb.ID, "Error guardando")
+			if cb.Message != nil {
+				tg.EditMessage(cb.Message.Chat.ID, cb.Message.MessageID, fmt.Sprintf("✕ Error guardando archivo: `%v`", err), nil)
+			}
+			return
+		}
+		tg.AnswerCallback(cb.ID, "Guardado en proyecto")
+		if cb.Message != nil {
+			tg.EditMessage(cb.Message.Chat.ID, cb.Message.MessageID, fmt.Sprintf("✅ **Guardado en proyecto (0 tokens):**\n`%s`", dest), nil)
+		}
+
+	case strings.HasPrefix(data, "up_dl:"):
+		upID := strings.TrimPrefix(data, "up_dl:")
+		up, ok := cg.PopUpload(upID)
+		if !ok {
+			tg.AnswerCallback(cb.ID, "Archivo expirado, reenvíalo")
+			return
+		}
+		dlDir := filepath.Join(cfg.HomeDir, "Downloads")
+		dest, err := obsidian.SaveFileToDir(up.FilePath, dlDir, up.FileName)
+		if err != nil {
+			tg.AnswerCallback(cb.ID, "Error guardando")
+			if cb.Message != nil {
+				tg.EditMessage(cb.Message.Chat.ID, cb.Message.MessageID, fmt.Sprintf("✕ Error guardando en Downloads: `%v`", err), nil)
+			}
+			return
+		}
+		tg.AnswerCallback(cb.ID, "Guardado en Downloads")
+		if cb.Message != nil {
+			tg.EditMessage(cb.Message.Chat.ID, cb.Message.MessageID, fmt.Sprintf("✅ **Guardado en Downloads (0 tokens):**\n`%s`", dest), nil)
+		}
+
+	case strings.HasPrefix(data, "up_pask:"):
+		upID := strings.TrimPrefix(data, "up_pask:")
+		up, ok := cg.GetUpload(upID)
+		if !ok {
+			tg.AnswerCallback(cb.ID, "Archivo expirado, reenvíalo")
+			return
+		}
+		kb := buildProjectsKeyboard(cfg, st.CurrentCWD, "up_psel:"+upID+":")
+		kb.InlineKeyboard = append(kb.InlineKeyboard, []telegram.InlineButton{
+			{Text: "🔙 Volver", CallbackData: "up_back:" + upID},
+		})
+		tg.AnswerCallback(cb.ID, "Elige proyecto destino")
+		if cb.Message != nil {
+			tg.EditMessage(cb.Message.Chat.ID, cb.Message.MessageID, fmt.Sprintf("📁 **¿En qué proyecto quieres guardar `%s`?**", up.FileName), kb)
+		}
+
+	case strings.HasPrefix(data, "up_psel:"):
+		rest := strings.TrimPrefix(data, "up_psel:")
+		parts := strings.SplitN(rest, ":", 2)
+		if len(parts) != 2 {
+			return
+		}
+		upID, projName := parts[0], parts[1]
+		up, ok := cg.PopUpload(upID)
+		if !ok {
+			tg.AnswerCallback(cb.ID, "Archivo expirado, reenvíalo")
+			return
+		}
+		targetDir := cfg.HomeDir
+		if projName != "HOME" {
+			for _, p := range projects.ListAvailableProjects(cfg) {
+				if p.Name == projName {
+					targetDir = p.Path
+					break
+				}
+			}
+		}
+		dest, err := obsidian.SaveFileToDir(up.FilePath, targetDir, up.FileName)
+		if err != nil {
+			tg.AnswerCallback(cb.ID, "Error guardando")
+			return
+		}
+		tg.AnswerCallback(cb.ID, "Guardado en "+projName)
+		if cb.Message != nil {
+			tg.EditMessage(cb.Message.Chat.ID, cb.Message.MessageID, fmt.Sprintf("✅ **Guardado en `%s` (0 tokens):**\n`%s`", projName, dest), nil)
+		}
+
+	case strings.HasPrefix(data, "up_obs:"):
+		rest := strings.TrimPrefix(data, "up_obs:")
+		parts := strings.SplitN(rest, ":", 3)
+		if len(parts) != 3 {
+			return
+		}
+		upID, projName, action := parts[0], parts[1], parts[2]
+		up, ok := cg.PopUpload(upID)
+		if !ok {
+			tg.AnswerCallback(cb.ID, "Archivo expirado, reenvíalo")
+			return
+		}
+		dest, err := obsidian.SavePDFToVaultProject(cfg, up.FilePath, projName, up.FileName)
+		if err != nil {
+			tg.AnswerCallback(cb.ID, "Error guardando en Obsidian")
+			if cb.Message != nil {
+				tg.EditMessage(cb.Message.Chat.ID, cb.Message.MessageID, fmt.Sprintf("✕ Error guardando PDF en Obsidian: `%v`", err), nil)
+			}
+			return
+		}
+		if action == "save" {
+			tg.AnswerCallback(cb.ID, "Guardado en Obsidian")
+			if cb.Message != nil {
+				tg.EditMessage(cb.Message.Chat.ID, cb.Message.MessageID, fmt.Sprintf("✅ **PDF guardado en Obsidian (0 tokens):**\n`%s`", dest), nil)
+			}
+			return
+		}
+		prompt, targetCWD := obsidian.BuildWicodeGeneratorPrompt(cfg, projName, dest, st.CurrentCWD)
+		st.SetCWD(targetCWD)
+		cg.Touch()
+		tg.AnswerCallback(cb.ID, "Iniciando Wicode Generator…")
+		if cb.Message != nil {
+			tg.EditMessage(
+				cb.Message.Chat.ID,
+				cb.Message.MessageID,
+				fmt.Sprintf("⚡ **PDF guardado en `%s/PDF/%s`**\n🚀 _Iniciando `wicode-prompt-generator` (Nota Markdown + Prompts T01..TXX)…_", projName, up.FileName),
+				nil,
+			)
+		}
+		enqueuePrompt(cfg, st, tg, up.ChatID, prompt, []string{dest})
+
+	case strings.HasPrefix(data, "up_back:"):
+		upID := strings.TrimPrefix(data, "up_back:")
+		up, ok := cg.GetUpload(upID)
+		if !ok {
+			tg.AnswerCallback(cb.ID, "Archivo expirado")
+			return
+		}
+		msg, kb := buildUploadActionView(cfg, st, up)
+		if cb.Message != nil {
+			tg.EditMessage(cb.Message.Chat.ID, cb.Message.MessageID, msg, kb)
+		}
+
+	case strings.HasPrefix(data, "up_drop:"):
+		upID := strings.TrimPrefix(data, "up_drop:")
+		if up, ok := cg.PopUpload(upID); ok {
+			_ = os.Remove(up.FilePath)
+		}
+		tg.AnswerCallback(cb.ID, "Archivo descartado")
+		if cb.Message != nil {
+			tg.EditMessage(cb.Message.Chat.ID, cb.Message.MessageID, "🗑️ Archivo descartado y eliminado de caché.", nil)
+		}
+
 	case strings.HasPrefix(data, "cg_cont:"):
 		holdID := strings.TrimPrefix(data, "cg_cont:")
 		held, ok := cg.Pop(holdID)
@@ -773,7 +1009,7 @@ func handleCallback(cfg *config.Config, st *state.BotSessionState, tg *telegram.
 		if cb.Message != nil {
 			tg.EditMessage(cb.Message.Chat.ID, cb.Message.MessageID, fmt.Sprintf("✅ Enviado a **%s** • 📂 `%s`", st.CurrentConversationTitle, st.GetCWDShortName(st.CurrentCWD)), nil)
 		}
-		enqueuePrompt(cfg, st, tg, held.ChatID, held.Prompt, nil)
+		enqueuePrompt(cfg, st, tg, held.ChatID, held.Prompt, held.TempFiles)
 
 	case strings.HasPrefix(data, "cg_new:"):
 		holdID := strings.TrimPrefix(data, "cg_new:")
@@ -792,11 +1028,15 @@ func handleCallback(cfg *config.Config, st *state.BotSessionState, tg *telegram.
 		if cb.Message != nil {
 			tg.EditMessage(cb.Message.Chat.ID, cb.Message.MessageID, fmt.Sprintf("✅ Enviado a **🆕 Nuevo chat** • 📂 `%s`", st.GetCWDShortName(st.CurrentCWD)), nil)
 		}
-		enqueuePrompt(cfg, st, tg, held.ChatID, held.Prompt, nil)
+		enqueuePrompt(cfg, st, tg, held.ChatID, held.Prompt, held.TempFiles)
 
 	case strings.HasPrefix(data, "cg_drop:"):
 		holdID := strings.TrimPrefix(data, "cg_drop:")
-		cg.Pop(holdID)
+		if held, ok := cg.Pop(holdID); ok {
+			for _, tf := range held.TempFiles {
+				_ = os.Remove(tf)
+			}
+		}
 		tg.AnswerCallback(cb.ID, "Descartado")
 		if cb.Message != nil {
 			tg.EditMessage(cb.Message.Chat.ID, cb.Message.MessageID, "🗑️ Mensaje descartado.", nil)
@@ -896,7 +1136,7 @@ func handleCallback(cfg *config.Config, st *state.BotSessionState, tg *telegram.
 		if cb.Message != nil {
 			tg.EditMessage(cb.Message.Chat.ID, cb.Message.MessageID, fmt.Sprintf("✅ Enviado a **%s** • 📂 `%s`", st.CurrentConversationTitle, st.GetCWDShortName(st.CurrentCWD)), nil)
 		}
-		enqueuePrompt(cfg, st, tg, held.ChatID, held.Prompt, nil)
+		enqueuePrompt(cfg, st, tg, held.ChatID, held.Prompt, held.TempFiles)
 
 	case strings.HasPrefix(data, "cg_back:"):
 		holdID := strings.TrimPrefix(data, "cg_back:")
