@@ -40,6 +40,7 @@ func New(cfg *config.Config) *BotSessionState {
 		CurrentEngine:            "agy",
 		CurrentConversationTitle: "▸ Continuar último chat (-c)",
 		ClaudeSessionTitle:       "▸ Último chat Claude (-c)",
+		CurrentModel:             "gemini-4-hydrogen-low",
 		CurrentEffort:            "low",
 		CurrentCWD:               cfg.HomeDir,
 		ConversationCWDMap:       make(map[string]string),
@@ -86,6 +87,9 @@ func (s *BotSessionState) loadState() {
 		s.CurrentEffort = eff
 	}
 	s.CurrentModel = strings.TrimSpace(loaded.CurrentModel)
+	if s.CurrentModel == "" {
+		s.CurrentModel = "gemini-4-hydrogen-low"
+	}
 	if loaded.CurrentCWD != "" {
 		if info, err := os.Stat(loaded.CurrentCWD); err == nil && info.IsDir() {
 			s.CurrentCWD = loaded.CurrentCWD

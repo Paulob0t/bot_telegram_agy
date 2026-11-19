@@ -69,6 +69,7 @@ func (a *App) buildChatGuardView(holdID, prompt, reason string) (string, *telegr
 		title = "Último chat activo (-c)"
 	}
 	cwdShort := a.State.GetCWDShortName(a.State.CurrentCWD)
+	effDisp, effID, _ := models.GetEffectiveModelInfo(a.Cfg, a.State)
 	preview := strings.Join(strings.Fields(prompt), " ")
 	if len([]rune(preview)) > 80 {
 		preview = string([]rune(preview)[:80]) + "…"
@@ -86,20 +87,31 @@ func (a *App) buildChatGuardView(holdID, prompt, reason string) (string, *telegr
 				{Text: "📂 Elegir otro chat", CallbackData: "cg_pick:" + holdID},
 			},
 			{
-				{Text: fmt.Sprintf("📁 Cambiar Proyecto (%s)", cwdShort), CallbackData: "cg_proj:" + holdID},
-				{Text: "🗑️ Descartar", CallbackData: "cg_drop:" + holdID},
+				{Text: fmt.Sprintf("📁 Proyecto (%s)", cwdShort), CallbackData: "cg_proj:" + holdID},
+				{Text: fmt.Sprintf("🤖 Modelo (%s)", effID), CallbackData: "cg_mod:" + holdID},
+			},
+			{
+				{Text: "🗑️ Descartar mensaje", CallbackData: "cg_drop:" + holdID},
 			},
 		},
 	}
 	msg := fmt.Sprintf(
-		"🧭 **¿En qué chat y proyecto va esto?** (%s)\n\n• 💬 **Chat:** **%s**\n• 📂 **Proyecto (`cwd`):** `%s` (`%s`)\n• 📝 **Mensaje:** `%s`",
-		reason, title, cwdShort, a.State.CurrentCWD, preview,
+		"🧭 **¿En qué chat y proyecto va esto?** (%s)\n\n"+
+			"• 💬 **Chat:** **%s**\n"+
+			"• 📂 **Proyecto (`cwd`):** `%s` (`%s`)\n"+
+			"• 🤖 **Modelo:** %s\n"+
+			"• 📝 **Mensaje:** `%s`",
+		reason, title, cwdShort, a.State.CurrentCWD, effDisp, preview,
 	)
 	return msg, kb
 }
 
 func (a *App) buildModelsView() (string, *telegram.InlineKeyboard) {
-	effDisp, _, ctxWin := models.GetEffectiveModelInfo(a.Cfg, a.State)
+	return a.buildModelsViewWithPrefix("mod:")
+}
+
+func (a *App) buildModelsViewWithPrefix(prefix string) (string, *telegram.InlineKeyboard) {
+	effDisp, activeID, ctxWin := models.GetEffectiveModelInfo(a.Cfg, a.State)
 	var rows [][]telegram.InlineButton
 
 	if a.State.CurrentEngine == "claude" {
@@ -109,15 +121,15 @@ func (a *App) buildModelsView() (string, *telegram.InlineKeyboard) {
 			defPrefix = "✅ "
 		}
 		rows = append(rows, []telegram.InlineButton{
-			{Text: fmt.Sprintf("%sPor defecto Claude CLI (%s)", defPrefix, cliDef), CallbackData: "mod:DEFAULT"},
+			{Text: fmt.Sprintf("%sPor defecto Claude CLI (%s)", defPrefix, cliDef), CallbackData: prefix + "DEFAULT"},
 		})
 		for _, m := range models.ClaudeCatalog {
-			prefix := m.Icon + " "
+			p := m.Icon + " "
 			if a.State.ClaudeModel == m.ID {
-				prefix = "✅ "
+				p = "✅ "
 			}
 			rows = append(rows, []telegram.InlineButton{
-				{Text: prefix + m.Name, CallbackData: "mod:" + m.ID},
+				{Text: p + m.Name, CallbackData: prefix + m.ID},
 			})
 		}
 		msg := fmt.Sprintf(
@@ -131,30 +143,35 @@ func (a *App) buildModelsView() (string, *telegram.InlineKeyboard) {
 		return msg, &telegram.InlineKeyboard{InlineKeyboard: rows}
 	}
 
-	cliDef := models.GetCLIDefaultModel(a.Cfg)
+	catalog := models.GetCatalog(a.Cfg)
 	defPrefix := "🔄 "
-	if a.State.CurrentModel == "" {
+	if activeID == models.DefaultBotModelID {
 		defPrefix = "✅ "
 	}
 	rows = append(rows, []telegram.InlineButton{
-		{Text: fmt.Sprintf("%sPor defecto CLI (%s)", defPrefix, cliDef), CallbackData: "mod:DEFAULT"},
+		{Text: fmt.Sprintf("%sDefault: %s", defPrefix, models.DefaultBotModelName), CallbackData: prefix + "DEFAULT"},
 	})
-	for _, m := range models.DefaultCatalog {
-		prefix := m.Icon + " "
-		if a.State.CurrentModel == m.ID {
-			prefix = "✅ "
+	for _, m := range catalog {
+		p := m.Icon + " "
+		if activeID == m.ID {
+			p = "✅ "
 		}
 		rows = append(rows, []telegram.InlineButton{
-			{Text: prefix + m.Name, CallbackData: "mod:" + m.ID},
+			{Text: p + m.Name, CallbackData: prefix + m.ID},
+		})
+	}
+	if prefix == "mod:" {
+		rows = append(rows, []telegram.InlineButton{
+			{Text: "🔄 Sincronizar modelos desde AGY CLI", CallbackData: "mod_sync"},
 		})
 	}
 	msg := fmt.Sprintf(
-		"🤖 **Selector de Modelo (Antigravity AGY)**\n\n"+
+		"🤖 **Selector de Modelo (Antigravity AGY · %d modelos)**\n\n"+
 			"• 📌 **En uso ahora:** %s\n"+
 			"• ⚡ **Esfuerzo:** `%s`\n"+
 			"• 🪟 **Ventana de contexto:** `%dk` tokens\n\n"+
-			"*Toca un modelo de la lista para activarlo:*",
-		effDisp, strings.ToUpper(a.State.CurrentEffort), ctxWin/1000,
+			"*Por defecto usa Gemini 4 Hydrogen (Low). Toca cualquiera para cambiarlo:*",
+		len(catalog), effDisp, strings.ToUpper(a.State.CurrentEffort), ctxWin/1000,
 	)
 	return msg, &telegram.InlineKeyboard{InlineKeyboard: rows}
 }

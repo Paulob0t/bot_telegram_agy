@@ -58,17 +58,17 @@ func RunPrompt(ctx context.Context, cfg *config.Config, st *state.BotSessionStat
 			"--output-format", "stream-json",
 			"--dangerously-skip-permissions",
 		}
-		if st.CurrentModel != "" {
-			args = append(args, "--model", st.CurrentModel)
-			lowMod := strings.ToLower(st.CurrentModel)
-			hasSuffix := strings.HasSuffix(lowMod, "-low") ||
-				strings.HasSuffix(lowMod, "-medium") ||
-				strings.HasSuffix(lowMod, "-high") ||
-				strings.HasSuffix(lowMod, "-xhigh")
-			if !hasSuffix && st.CurrentEffort != "" {
-				args = append(args, "--effort", st.CurrentEffort)
-			}
-		} else if st.CurrentEffort != "" {
+		activeModel := st.CurrentModel
+		if activeModel == "" || activeModel == "DEFAULT" {
+			activeModel = "gemini-4-hydrogen-low"
+		}
+		args = append(args, "--model", activeModel)
+		lowMod := strings.ToLower(activeModel)
+		hasSuffix := strings.HasSuffix(lowMod, "-low") ||
+			strings.HasSuffix(lowMod, "-medium") ||
+			strings.HasSuffix(lowMod, "-high") ||
+			strings.HasSuffix(lowMod, "-xhigh")
+		if !hasSuffix && st.CurrentEffort != "" {
 			args = append(args, "--effort", st.CurrentEffort)
 		}
 		if st.CurrentConversationID == "" || st.CurrentConversationID == "LATEST" {

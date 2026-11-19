@@ -384,6 +384,42 @@ func (a *App) handleChatGuardCallback(cb *telegram.CallbackQuery, data string) b
 		a.enqueuePrompt(held.ChatID, held.Prompt, held.TempFiles)
 		return true
 
+	case strings.HasPrefix(data, "cg_mod:"):
+		holdID := strings.TrimPrefix(data, "cg_mod:")
+		if _, ok := a.Guard.Get(holdID); !ok {
+			a.TG.AnswerCallback(cb.ID, "Expiró, reenvía el mensaje")
+			return true
+		}
+		msg, kb := a.buildModelsViewWithPrefix("cg_msel:" + holdID + ":")
+		kb.InlineKeyboard = append(kb.InlineKeyboard, []telegram.InlineButton{
+			{Text: "🔙 Volver al mensaje", CallbackData: "cg_back:" + holdID},
+		})
+		a.TG.AnswerCallback(cb.ID, "Elige modelo")
+		if cb.Message != nil {
+			a.TG.EditMessage(cb.Message.Chat.ID, cb.Message.MessageID, msg, kb)
+		}
+		return true
+
+	case strings.HasPrefix(data, "cg_msel:"):
+		rest := strings.TrimPrefix(data, "cg_msel:")
+		parts := strings.SplitN(rest, ":", 2)
+		if len(parts) != 2 {
+			return true
+		}
+		holdID, mod := parts[0], parts[1]
+		a.applyModelSelection(mod)
+		held, ok := a.Guard.Get(holdID)
+		if !ok {
+			a.TG.AnswerCallback(cb.ID, "Modelo actualizado")
+			return true
+		}
+		a.TG.AnswerCallback(cb.ID, "Modelo: "+a.State.CurrentModel)
+		if cb.Message != nil {
+			text, kb := a.buildChatGuardView(holdID, held.Prompt, "modelo actualizado")
+			a.TG.EditMessage(cb.Message.Chat.ID, cb.Message.MessageID, text, kb)
+		}
+		return true
+
 	case strings.HasPrefix(data, "cg_back:"):
 		holdID := strings.TrimPrefix(data, "cg_back:")
 		held, ok := a.Guard.Get(holdID)
@@ -526,23 +562,22 @@ func (a *App) handleSystemCallback(cb *telegram.CallbackQuery, data string) bool
 		}
 		return true
 
-	case strings.HasPrefix(data, "mod:"):
-		mod := strings.TrimPrefix(data, "mod:")
-		if mod == "DEFAULT" {
-			mod = ""
-		}
-		if a.State.CurrentEngine == "claude" {
-			a.State.ClaudeModel = mod
-		} else {
-			a.State.CurrentModel = mod
-			for _, eff := range []string{"xhigh", "low", "medium", "high"} {
-				if strings.HasSuffix(strings.ToLower(mod), "-"+eff) {
-					a.State.CurrentEffort = eff
-					break
-				}
+	case data == "mod_sync":
+		a.TG.AnswerCallback(cb.ID, "Sincronizando con agy models…")
+		synced, err := models.SyncFromCLI(a.Cfg)
+		msg, kb := a.buildModelsView()
+		if cb.Message != nil {
+			if err != nil {
+				a.TG.EditMessage(cb.Message.Chat.ID, cb.Message.MessageID, fmt.Sprintf("⚠️ Error sincronizando CLI (`%v`)\n\n%s", err, msg), kb)
+			} else {
+				a.TG.EditMessage(cb.Message.Chat.ID, cb.Message.MessageID, fmt.Sprintf("✅ **Catálogo sincronizado (%d modelos):**\n\n%s", len(synced), msg), kb)
 			}
 		}
-		_ = a.State.Save()
+		return true
+
+	case strings.HasPrefix(data, "mod:"):
+		mod := strings.TrimPrefix(data, "mod:")
+		a.applyModelSelection(mod)
 		effDisp, _, ctxWin := models.GetEffectiveModelInfo(a.Cfg, a.State)
 		a.TG.AnswerCallback(cb.ID, "Modelo actualizado")
 		if cb.Message != nil {
@@ -578,6 +613,28 @@ func (a *App) handleSystemCallback(cb *telegram.CallbackQuery, data string) bool
 		return true
 	}
 	return false
+}
+
+func (a *App) applyModelSelection(mod string) {
+	if a.State.CurrentEngine == "claude" {
+		if mod == "DEFAULT" {
+			mod = ""
+		}
+		a.State.ClaudeModel = mod
+		_ = a.State.Save()
+		return
+	}
+	if mod == "DEFAULT" || mod == "" {
+		mod = models.DefaultBotModelID
+	}
+	a.State.CurrentModel = mod
+	for _, eff := range []string{"xhigh", "low", "medium", "high"} {
+		if strings.HasSuffix(strings.ToLower(mod), "-"+eff) {
+			a.State.CurrentEffort = eff
+			break
+		}
+	}
+	_ = a.State.Save()
 }
 
 func (a *App) selectConversation(targetID string) {
