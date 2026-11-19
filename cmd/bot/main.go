@@ -500,7 +500,7 @@ func handleCommand(cfg *config.Config, st *state.BotSessionState, tg *telegram.C
 		_, _ = tg.SendMessage(chatID, "◆ **Notas / Prompts (Obsidian)**", &telegram.InlineKeyboard{InlineKeyboard: rows})
 
 	case "/resume", "/chats", "/historial":
-		msg, kb := buildResumeKeyboard(cfg, st, "chat:")
+		msg, kb := buildResumeKeyboard(cfg, st, "chat:", "res_page:", 0)
 		_, _ = tg.SendMessage(chatID, msg, kb)
 
 	case "/stop", "/cancel", "/cancelar":
@@ -601,42 +601,83 @@ func buildProjectsKeyboard(cfg *config.Config, activeCWD, prefix string) *telegr
 	return &telegram.InlineKeyboard{InlineKeyboard: rows}
 }
 
-func buildResumeKeyboard(cfg *config.Config, st *state.BotSessionState, prefix string) (string, *telegram.InlineKeyboard) {
+func buildResumeKeyboard(cfg *config.Config, st *state.BotSessionState, prefix, pagePrefix string, page int) (string, *telegram.InlineKeyboard) {
+	const pageSize = 6
 	var rows [][]telegram.InlineButton
 	rows = append(rows, []telegram.InlineButton{
 		{Text: "🔄 Último activo (-c)", CallbackData: prefix + "LATEST"},
 		{Text: "🆕 Nuevo chat", CallbackData: prefix + "NEW"},
 	})
 
+	type chatItem struct {
+		id    string
+		label string
+	}
+	var items []chatItem
+	header := "🗂️ **Historial de Chats (Antigravity AGY)**"
+
 	if st.CurrentEngine == "claude" {
-		sessions := chats.ListClaudeSessions(cfg, 8)
-		for _, s := range sessions {
+		header = "⌘ **Sesiones recientes (Claude Code)**"
+		for _, s := range chats.ListClaudeSessions(cfg, 0) {
 			title := s.Title
 			if len([]rune(title)) > 34 {
 				title = string([]rune(title)[:34]) + "…"
 			}
-			rows = append(rows, []telegram.InlineButton{{Text: "🟠 " + title, CallbackData: prefix + s.SessionID}})
+			items = append(items, chatItem{id: s.SessionID, label: "🟠 " + title})
 		}
-		return "⌘ **Sesiones recientes (Claude Code)**", &telegram.InlineKeyboard{InlineKeyboard: rows}
+	} else {
+		for _, c := range chats.ListAgyConversations(cfg, 0) {
+			title := c.Title
+			projTag := ""
+			if mapped, ok := st.ConversationCWDMap[c.ConversationID]; ok && mapped != "" {
+				projTag = " [" + st.GetCWDShortName(mapped) + "]"
+			}
+			maxLen := 32
+			if projTag != "" {
+				maxLen = 24
+			}
+			if len([]rune(title)) > maxLen {
+				title = string([]rune(title)[:maxLen]) + "…"
+			}
+			items = append(items, chatItem{id: c.ConversationID, label: "💬 " + title + projTag})
+		}
 	}
 
-	convs := chats.ListAgyConversations(cfg, 8)
-	for _, c := range convs {
-		title := c.Title
-		projTag := ""
-		if mapped, ok := st.ConversationCWDMap[c.ConversationID]; ok && mapped != "" {
-			projTag = " [" + st.GetCWDShortName(mapped) + "]"
-		}
-		maxLen := 32
-		if projTag != "" {
-			maxLen = 24
-		}
-		if len([]rune(title)) > maxLen {
-			title = string([]rune(title)[:maxLen]) + "…"
-		}
-		rows = append(rows, []telegram.InlineButton{{Text: "💬 " + title + projTag, CallbackData: prefix + c.ConversationID}})
+	total := len(items)
+	totalPages := (total + pageSize - 1) / pageSize
+	if totalPages < 1 {
+		totalPages = 1
 	}
-	return "🗂️ **Conversaciones recientes (Antigravity AGY)**", &telegram.InlineKeyboard{InlineKeyboard: rows}
+	if page < 0 {
+		page = 0
+	}
+	if page >= totalPages {
+		page = totalPages - 1
+	}
+
+	start := page * pageSize
+	end := start + pageSize
+	if end > total {
+		end = total
+	}
+	for _, it := range items[start:end] {
+		rows = append(rows, []telegram.InlineButton{{Text: it.label, CallbackData: prefix + it.id}})
+	}
+
+	if totalPages > 1 {
+		var nav []telegram.InlineButton
+		if page > 0 {
+			nav = append(nav, telegram.InlineButton{Text: "◀️ Anterior", CallbackData: fmt.Sprintf("%s%d", pagePrefix, page-1)})
+		}
+		nav = append(nav, telegram.InlineButton{Text: fmt.Sprintf("📄 %d/%d", page+1, totalPages), CallbackData: "res_noop"})
+		if page < totalPages-1 {
+			nav = append(nav, telegram.InlineButton{Text: "Siguiente ▶️", CallbackData: fmt.Sprintf("%s%d", pagePrefix, page+1)})
+		}
+		rows = append(rows, nav)
+	}
+
+	msg := fmt.Sprintf("%s\n*%d conversaciones · Página %d/%d*", header, total, page+1, totalPages)
+	return msg, &telegram.InlineKeyboard{InlineKeyboard: rows}
 }
 
 func buildConfigKeyboard(st *state.BotSessionState) (string, *telegram.InlineKeyboard) {
@@ -806,19 +847,36 @@ func handleCallback(cfg *config.Config, st *state.BotSessionState, tg *telegram.
 		}
 
 	case strings.HasPrefix(data, "cg_pick:"):
-		holdID := strings.TrimPrefix(data, "cg_pick:")
+		rest := strings.TrimPrefix(data, "cg_pick:")
+		holdID := rest
+		page := 0
+		if parts := strings.SplitN(rest, ":", 2); len(parts) == 2 {
+			holdID = parts[0]
+			page, _ = strconv.Atoi(parts[1])
+		}
 		if _, ok := cg.Get(holdID); !ok {
 			tg.AnswerCallback(cb.ID, "Expiró, reenvía el mensaje")
 			return
 		}
-		_, kb := buildResumeKeyboard(cfg, st, "cg_csel:"+holdID+":")
+		msg, kb := buildResumeKeyboard(cfg, st, "cg_csel:"+holdID+":", "cg_pick:"+holdID+":", page)
 		kb.InlineKeyboard = append(kb.InlineKeyboard, []telegram.InlineButton{
 			{Text: "🔙 Volver", CallbackData: "cg_back:" + holdID},
 		})
 		tg.AnswerCallback(cb.ID, "Elige chat")
 		if cb.Message != nil {
-			tg.EditMessage(cb.Message.Chat.ID, cb.Message.MessageID, "📂 **Elige en qué chat enviar tu mensaje:**", kb)
+			tg.EditMessage(cb.Message.Chat.ID, cb.Message.MessageID, msg, kb)
 		}
+
+	case strings.HasPrefix(data, "res_page:"):
+		page, _ := strconv.Atoi(strings.TrimPrefix(data, "res_page:"))
+		msg, kb := buildResumeKeyboard(cfg, st, "chat:", "res_page:", page)
+		tg.AnswerCallback(cb.ID, "")
+		if cb.Message != nil {
+			tg.EditMessage(cb.Message.Chat.ID, cb.Message.MessageID, msg, kb)
+		}
+
+	case data == "res_noop":
+		tg.AnswerCallback(cb.ID, "")
 
 	case strings.HasPrefix(data, "cg_csel:"):
 		rest := strings.TrimPrefix(data, "cg_csel:")
