@@ -12,6 +12,7 @@ dependencies:
   rive: ^0.13.20
   file_picker: ^8.1.7
   http: ^1.2.2
+  flutter_local_notifications: ^18.0.1
 
 dev_dependencies:
   flutter_test:

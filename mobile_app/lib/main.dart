@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 
 import 'screens/companion_screen.dart';
+import 'services/notifications.dart';
 import 'services/ws_client.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  LocalNotifier.init();
 
   const defaultUrl = String.fromEnvironment(
     'AGY_WS_URL',

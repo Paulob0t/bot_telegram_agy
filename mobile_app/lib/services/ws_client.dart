@@ -6,6 +6,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import '../models/agent_event.dart';
+import 'notifications.dart';
 
 /// Cliente WebSocket resiliente con reconexión exponencial y sincronización
 /// directa con la State Machine de Rive (`idle`, `listening`, `thinking`, `speaking`, `sleeping`).
@@ -324,6 +325,14 @@ class AgyWsClient extends ChangeNotifier {
 
     if (ev.done) {
       _activeStreamingMsgId = null;
+      if (ev.text.trim().isNotEmpty) {
+        final lines = ev.text.trim().split('\n');
+        final title = lines.first.length > 50
+            ? '${lines.first.substring(0, 50)}…'
+            : lines.first;
+        final body = lines.length > 1 ? lines.sublist(1).join(' ').trim() : ev.text.trim();
+        LocalNotifier.show(title, body.isEmpty ? 'Tarea completada' : body);
+      }
     }
     notifyListeners();
   }
