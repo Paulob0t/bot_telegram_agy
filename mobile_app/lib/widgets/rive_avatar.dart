@@ -219,7 +219,7 @@ class _ProceduralCharacterPainter extends CustomPainter {
           width: radius * 2.1,
           height: radius * 1.75,
         ),
-        const Radius.circular(18),
+        Radius.zero,
       );
       canvas.drawRRect(headRect, shellPaint);
       canvas.drawRRect(headRect, borderPaint);

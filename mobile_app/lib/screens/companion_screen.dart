@@ -354,7 +354,7 @@ class _CompanionScreenState extends State<CompanionScreen> {
                       icon: Badge(
                         isLabelVisible: widget.client.unreadNotifications > 0,
                         label: Text('${widget.client.unreadNotifications}'),
-                        child: const Icon(Icons.notifications_none, color: Color(0xFFE6EDF3), size: 20),
+                        child: const Icon(Icons.inbox_rounded, color: Color(0xFFE6EDF3), size: 20),
                       ),
                     ),
                   ),
