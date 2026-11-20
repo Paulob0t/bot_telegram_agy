@@ -24,9 +24,10 @@ const (
 type EventType string
 
 const (
-	EventTypeState EventType = "state"
-	EventTypeChunk EventType = "chunk"
-	EventTypeError EventType = "error"
+	EventTypeState  EventType = "state"
+	EventTypeChunk  EventType = "chunk"
+	EventTypeNotify EventType = "notify"
+	EventTypeError  EventType = "error"
 )
 
 // Event modela el contrato unificado de salida para WebSocket (Flutter + Rive) y Telegram.
@@ -34,6 +35,7 @@ type Event struct {
 	Type       EventType `json:"type"`
 	State      State     `json:"state,omitempty"`
 	Text       string    `json:"text,omitempty"`
+	Title      string    `json:"title,omitempty"`
 	ToolStatus string    `json:"tool_status,omitempty"`
 	Done       bool      `json:"done"`
 	Message    string    `json:"message,omitempty"`
@@ -133,12 +135,13 @@ func (s *Service) broadcast(ev Event, perReq func(Event)) {
 	}
 }
 
-// EmitExternalNotification envía una notificación (ej. desde hooks de terminal AGY/Claude) a los clientes suscritos.
-func (s *Service) EmitExternalNotification(text string) {
+// EmitExternalNotification envía una notificación push de terminal/IDE sin ensuciar el chat activo.
+func (s *Service) EmitExternalNotification(title, body string) {
 	s.broadcast(Event{
-		Type: EventTypeChunk,
-		Text: text,
-		Done: true,
+		Type:  EventTypeNotify,
+		Title: title,
+		Text:  body,
+		Done:  true,
 	}, nil)
 }
 

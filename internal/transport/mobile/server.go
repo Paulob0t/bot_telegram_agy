@@ -193,16 +193,8 @@ func (s *Server) handleNotify(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "JSON inválido", http.StatusBadRequest)
 		return
 	}
-	msg := strings.TrimSpace(body.Title)
-	if b := strings.TrimSpace(body.Body); b != "" {
-		if msg != "" {
-			msg += "\n\n" + b
-		} else {
-			msg = b
-		}
-	}
-	if msg != "" {
-		s.agent.EmitExternalNotification(msg)
+	if title := strings.TrimSpace(body.Title); title != "" || strings.TrimSpace(body.Body) != "" {
+		s.agent.EmitExternalNotification(title, strings.TrimSpace(body.Body))
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write([]byte(`{"ok":true}`))

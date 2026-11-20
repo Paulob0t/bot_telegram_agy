@@ -1,5 +1,6 @@
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../models/agent_event.dart';
 import '../services/ws_client.dart';
@@ -371,7 +372,19 @@ class _CompanionScreenState extends State<CompanionScreen> {
                       itemCount: widget.client.messages.length,
                       itemBuilder: (context, index) {
                         final msg = widget.client.messages[index];
-                        return _MessageBubble(message: msg);
+                        return _MessageBubble(
+                          message: msg,
+                          onCopy: () {
+                            Clipboard.setData(ClipboardData(text: msg.text));
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Texto copiado'),
+                                duration: Duration(seconds: 1),
+                              ),
+                            );
+                          },
+                          onDelete: () => widget.client.deleteMessage(msg.id),
+                        );
                       },
                     ),
             ),
@@ -653,8 +666,48 @@ class _CompanionScreenState extends State<CompanionScreen> {
 
 class _MessageBubble extends StatelessWidget {
   final ChatMessage message;
+  final VoidCallback? onCopy;
+  final VoidCallback? onDelete;
 
-  const _MessageBubble({required this.message});
+  const _MessageBubble({
+    required this.message,
+    this.onCopy,
+    this.onDelete,
+  });
+
+  void _showActions(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF1A1D21),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (message.text.isNotEmpty)
+              ListTile(
+                leading: const Icon(Icons.copy, color: Color(0xFF58A6FF)),
+                title: const Text('Copiar texto', style: TextStyle(color: Color(0xFFE6EDF3))),
+                onTap: () {
+                  Navigator.of(ctx).pop();
+                  onCopy?.call();
+                },
+              ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline, color: Color(0xFFF85149)),
+              title: const Text('Eliminar mensaje', style: TextStyle(color: Color(0xFFF85149))),
+              onTap: () {
+                Navigator.of(ctx).pop();
+                onDelete?.call();
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -667,7 +720,9 @@ class _MessageBubble extends StatelessWidget {
 
     return Align(
       alignment: message.isUser ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
+      child: GestureDetector(
+        onLongPress: () => _showActions(context),
+        child: Container(
         margin: const EdgeInsets.symmetric(vertical: 5),
         padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
         constraints: const BoxConstraints(maxWidth: 340),
@@ -700,6 +755,7 @@ class _MessageBubble extends StatelessWidget {
               ),
             ],
           ],
+        ),
         ),
       ),
     );

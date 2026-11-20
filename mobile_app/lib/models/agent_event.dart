@@ -26,12 +26,13 @@ enum CharacterState {
   }
 }
 
-enum AgentEventType { state, chunk, error, unknown }
+enum AgentEventType { state, chunk, notify, error, unknown }
 
 /// Evento recibido desde el servidor Go sobre WebSocket.
 class AgentEvent {
   final AgentEventType type;
   final CharacterState? state;
+  final String title;
   final String text;
   final String toolStatus;
   final bool done;
@@ -40,6 +41,7 @@ class AgentEvent {
   const AgentEvent({
     required this.type,
     this.state,
+    this.title = '',
     this.text = '',
     this.toolStatus = '',
     this.done = false,
@@ -60,6 +62,13 @@ class AgentEvent {
           text: json['text'] as String? ?? '',
           toolStatus: json['tool_status'] as String? ?? '',
           done: json['done'] as bool? ?? false,
+        );
+      case 'notify':
+        return AgentEvent(
+          type: AgentEventType.notify,
+          title: json['title'] as String? ?? 'HyprAgent',
+          text: json['text'] as String? ?? '',
+          done: true,
         );
       case 'error':
         return AgentEvent(
