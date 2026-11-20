@@ -1,7 +1,7 @@
 name: paulobot_mobile
 description: Cliente móvil Flutter + Rive conectado por Tailscale WebSocket al núcleo en Go de Paulobot (AGY / Claude).
 publish_to: "none"
-version: 1.0.7+8
+version: 1.0.8+9
 
 environment:
   sdk: ">=3.3.0 <4.0.0"

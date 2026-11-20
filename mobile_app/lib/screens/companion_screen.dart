@@ -321,6 +321,15 @@ class _CompanionScreenState extends State<CompanionScreen> {
               ),
             ),
           IconButton(
+            tooltip: 'Buzón de notificaciones',
+            onPressed: _openNotificationsInbox,
+            icon: Badge(
+              isLabelVisible: widget.client.unreadNotifications > 0,
+              label: Text('${widget.client.unreadNotifications}'),
+              child: const Icon(Icons.notifications_none, color: Color(0xFF8B949E), size: 20),
+            ),
+          ),
+          IconButton(
             tooltip: 'Configurar nodo Tailscale',
             onPressed: _openConnectionSheet,
             icon: const Icon(Icons.tune, color: Color(0xFF8B949E), size: 20),
@@ -462,6 +471,92 @@ class _CompanionScreenState extends State<CompanionScreen> {
       ),
     );
   }
+  void _openNotificationsInbox() {
+    widget.client.markNotificationsRead();
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF1A1D21),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
+      ),
+      builder: (ctx) {
+        final notifs = widget.client.notifications;
+        return SafeArea(
+          child: SizedBox(
+            height: MediaQuery.of(ctx).size.height * 0.65,
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 14, 12, 8),
+                  child: Row(
+                    children: [
+                      const Expanded(
+                        child: Text(
+                          'Buzón de Tareas (AGY / Claude)',
+                          style: TextStyle(
+                            color: Color(0xFFE6EDF3),
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      if (notifs.isNotEmpty)
+                        TextButton(
+                          onPressed: () {
+                            widget.client.clearNotifications();
+                            Navigator.of(ctx).pop();
+                          },
+                          child: const Text(
+                            'Limpiar',
+                            style: TextStyle(color: Color(0xFFF85149)),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                const Divider(color: Color(0xFF21262D), height: 1),
+                Expanded(
+                  child: notifs.isEmpty
+                      ? const Center(
+                          child: Text(
+                            'Sin notificaciones de terminal/IDE aún.',
+                            style: TextStyle(color: Color(0xFF8B949E), fontSize: 13),
+                          ),
+                        )
+                      : ListView.separated(
+                          padding: const EdgeInsets.all(14),
+                          itemCount: notifs.length,
+                          separatorBuilder: (_, __) => const SizedBox(height: 10),
+                          itemBuilder: (_, idx) {
+                            final n = notifs[idx];
+                            return Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF111315),
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(color: const Color(0xFF21262D)),
+                              ),
+                              child: SelectableText(
+                                n.text,
+                                style: const TextStyle(
+                                  color: Color(0xFFE6EDF3),
+                                  fontSize: 13,
+                                  height: 1.4,
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Future<void> _openOptionPicker(String cmd) async {
     final data = await widget.client.fetchOptions();
     if (!mounted || data == null) return;

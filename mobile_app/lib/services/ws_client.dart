@@ -10,7 +10,7 @@ import 'package:path_provider/path_provider.dart';
 import '../models/agent_event.dart';
 import 'notifications.dart';
 
-const int currentAppBuildNumber = 8;
+const int currentAppBuildNumber = 9;
 
 /// Cliente WebSocket resiliente con reconexión exponencial y sincronización
 /// directa con la State Machine de Rive (`idle`, `listening`, `thinking`, `speaking`, `sleeping`).
@@ -30,6 +30,8 @@ class AgyWsClient extends ChangeNotifier {
 
   CharacterState _characterState = CharacterState.sleeping;
   final List<ChatMessage> _messages = [];
+  final List<ChatMessage> _notifications = [];
+  int _unreadNotifications = 0;
   String? _activeStreamingMsgId;
   String? _lastError;
   bool _updateAvailable = false;
@@ -59,6 +61,8 @@ class AgyWsClient extends ChangeNotifier {
   int get retryAttempt => _retryAttempt;
   CharacterState get characterState => _characterState;
   List<ChatMessage> get messages => List.unmodifiable(_messages);
+  List<ChatMessage> get notifications => List.unmodifiable(_notifications);
+  int get unreadNotifications => _unreadNotifications;
   String? get lastError => _lastError;
   bool get updateAvailable => _updateAvailable;
   String get availableVersion => _availableVersion;
@@ -283,10 +287,23 @@ class AgyWsClient extends ChangeNotifier {
           break;
 
         case AgentEventType.notify:
-          LocalNotifier.show(
-            ev.title.isNotEmpty ? ev.title : 'HyprAgent',
-            ev.text.isNotEmpty ? ev.text : 'Tarea completada en tu PC',
+          final title = ev.title.isNotEmpty ? ev.title : 'HyprAgent';
+          final body = ev.text.isNotEmpty ? ev.text : 'Tarea completada en tu PC';
+          _notifications.insert(
+            0,
+            ChatMessage(
+              id: 'n_${DateTime.now().microsecondsSinceEpoch}',
+              isUser: false,
+              text: '$title\n\n$body',
+              timestamp: DateTime.now(),
+            ),
           );
+          if (_notifications.length > 50) {
+            _notifications.removeLast();
+          }
+          _unreadNotifications++;
+          notifyListeners();
+          LocalNotifier.show(title, body);
           break;
 
         case AgentEventType.error:
@@ -379,6 +396,19 @@ class AgyWsClient extends ChangeNotifier {
     _reconnectTimer = Timer(Duration(seconds: expSeconds), () {
       connect();
     });
+    notifyListeners();
+  }
+
+  void markNotificationsRead() {
+    if (_unreadNotifications > 0) {
+      _unreadNotifications = 0;
+      notifyListeners();
+    }
+  }
+
+  void clearNotifications() {
+    _notifications.clear();
+    _unreadNotifications = 0;
     notifyListeners();
   }
 
