@@ -116,7 +116,7 @@ func RunClaudeHook(cfg *config.Config, st *state.BotSessionState) {
 		title = "Tarea Claude lista"
 	}
 	engineLabel := "Claude"
-	if strings.Contains(transcriptPath, ".gemini") || strings.Contains(transcriptPath, "antigravity") {
+	if !strings.Contains(transcriptPath, ".claude") {
 		engineLabel = "AGY"
 	}
 	msg := fmt.Sprintf("✓ *[%s] %s* · `%s`", engineLabel, title, wsName)
