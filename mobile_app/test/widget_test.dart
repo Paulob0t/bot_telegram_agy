@@ -17,7 +17,6 @@ void main() {
 
     expect(find.byType(RiveCompanionAvatar), findsOneWidget);
     expect(find.textContaining('HyprAgent'), findsOneWidget);
-    expect(find.textContaining('PC suspendida / desconectada'), findsOneWidget);
     expect(client.characterState, CharacterState.sleeping);
 
     // Abrir hoja de configuración de Tailscale

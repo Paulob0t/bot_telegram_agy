@@ -23,8 +23,6 @@ class _CompanionScreenState extends State<CompanionScreen> {
   final ScrollController _scrollController = ScrollController();
   int _lastMsgCount = 0;
   String _assistantName = 'HyprAgent';
-  double _avatarRight = 14;
-  double _avatarTop = 12;
 
   @override
   void initState() {
@@ -258,163 +256,131 @@ class _CompanionScreenState extends State<CompanionScreen> {
     );
   }
 
-  String _stateLabel(CharacterState s) {
-    switch (s) {
-      case CharacterState.idle:
-        return 'En línea · En espera';
-      case CharacterState.listening:
-        return 'Escuchando entrada';
-      case CharacterState.thinking:
-        return 'Razonando / Ejecutando';
-      case CharacterState.speaking:
-        return 'Respondiendo';
-      case CharacterState.sleeping:
-        return widget.client.isConnecting
-            ? 'Conectando a Tailscale...'
-            : 'PC suspendida / desconectada (reintento #${widget.client.retryAttempt})';
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final state = widget.client.characterState;
-    final busy = state == CharacterState.thinking || state == CharacterState.speaking;
 
     return Scaffold(
-      backgroundColor: const Color(0xFF111315),
+      backgroundColor: const Color(0xFF0B0C0E),
       drawer: _buildCommandsDrawer(),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF111315),
-        elevation: 0,
-        iconTheme: const IconThemeData(color: Color(0xFF8B949E)),
-        title: GestureDetector(
-          onTap: _openConnectionSheet,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                _assistantName,
-                style: const TextStyle(
-                  color: Color(0xFFE6EDF3),
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              Text(
-                _stateLabel(state),
-                style: const TextStyle(
-                  color: Color(0xFF8B949E),
-                  fontSize: 12,
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          if (busy)
-            TextButton(
-              onPressed: widget.client.stopExecution,
-              child: const Text(
-                'Detener',
-                style: TextStyle(
-                  color: Color(0xFFF85149),
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-          IconButton(
-            tooltip: 'Buzón de notificaciones',
-            onPressed: _openNotificationsInbox,
-            icon: Badge(
-              isLabelVisible: widget.client.unreadNotifications > 0,
-              label: Text('${widget.client.unreadNotifications}'),
-              child: const Icon(Icons.notifications_none, color: Color(0xFF8B949E), size: 20),
-            ),
-          ),
-          IconButton(
-            tooltip: 'Configurar nodo Tailscale',
-            onPressed: _openConnectionSheet,
-            icon: const Icon(Icons.tune, color: Color(0xFF8B949E), size: 20),
-          ),
-        ],
-      ),
       body: SafeArea(
         child: Column(
           children: [
-            // Área principal del chat con personaje flotante arrastrable
-            Expanded(
-              child: Stack(
+            // Header minimalista fijo: [=]  [Avatar + Nombre]  [🔔] [⚙️]
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  widget.client.messages.isEmpty
-                      ? Center(
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 32),
-                            child: Text(
-                              state == CharacterState.sleeping
-                                  ? 'Esperando conexión con tu PC por Tailscale (${widget.client.wsUrl}).'
-                                  : 'Escribe una tarea para ejecutarla en tu sesión activa de AGY o Claude.',
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(
-                                color: Color(0xFF8B949E),
-                                fontSize: 13,
-                                height: 1.4,
-                              ),
+                  Builder(
+                    builder: (btnCtx) => IconButton(
+                      tooltip: 'Menú de comandos',
+                      onPressed: () => Scaffold.of(btnCtx).openDrawer(),
+                      style: IconButton.styleFrom(
+                        backgroundColor: const Color(0xFF1A1D21),
+                      ),
+                      icon: const Icon(Icons.drag_handle, color: Color(0xFFE6EDF3), size: 20),
+                    ),
+                  ),
+                  const Spacer(),
+                  GestureDetector(
+                    onTap: () => _onAvatarTap(state),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 64,
+                          height: 64,
+                          padding: const EdgeInsets.all(6),
+                          decoration: const BoxDecoration(
+                            color: Color(0xFF15181C),
+                            shape: BoxShape.circle,
+                          ),
+                          child: RiveCompanionAvatar(state: state),
+                        ),
+                        const SizedBox(height: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF1A1D21),
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: Text(
+                            _assistantName,
+                            style: const TextStyle(
+                              color: Color(0xFFE6EDF3),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
                             ),
                           ),
-                        )
-                      : ListView.builder(
-                          controller: _scrollController,
-                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-                          itemCount: widget.client.messages.length,
-                          itemBuilder: (context, index) {
-                            final msg = widget.client.messages[index];
-                            return _MessageBubble(
-                              message: msg,
-                              onCopy: () {
-                                Clipboard.setData(ClipboardData(text: msg.text));
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    content: Text('Texto copiado'),
-                                    duration: Duration(seconds: 1),
-                                  ),
-                                );
-                              },
-                              onDelete: () => widget.client.deleteMessage(msg.id),
-                            );
-                          },
                         ),
-                  Positioned(
-                    right: _avatarRight,
-                    top: _avatarTop,
-                    child: GestureDetector(
-                      onPanUpdate: (details) {
-                        setState(() {
-                          _avatarRight = (_avatarRight - details.delta.dx).clamp(8.0, 260.0);
-                          _avatarTop = (_avatarTop + details.delta.dy).clamp(8.0, 420.0);
-                        });
-                      },
-                      child: Container(
-                        width: 96,
-                        height: 96,
-                        padding: const EdgeInsets.all(6),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF15181C).withValues(alpha: 0.92),
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: const Color(0xFF30363D)),
-                          boxShadow: const [
-                            BoxShadow(
-                              color: Colors.black54,
-                              blurRadius: 10,
-                              offset: Offset(0, 4),
-                            ),
-                          ],
-                        ),
-                        child: RiveCompanionAvatar(state: state),
-                      ),
+                      ],
                     ),
+                  ),
+                  const Spacer(),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        tooltip: 'Buzón de notificaciones',
+                        onPressed: _openNotificationsInbox,
+                        icon: Badge(
+                          isLabelVisible: widget.client.unreadNotifications > 0,
+                          label: Text('${widget.client.unreadNotifications}'),
+                          child: const Icon(Icons.notifications_none, color: Color(0xFF8B949E), size: 20),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Configurar nodo Tailscale',
+                        onPressed: _openConnectionSheet,
+                        icon: const Icon(Icons.tune, color: Color(0xFF8B949E), size: 20),
+                      ),
+                    ],
                   ),
                 ],
               ),
+            ),
+
+            // Área principal del chat sin choques
+            Expanded(
+              child: widget.client.messages.isEmpty
+                  ? Center(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 32),
+                        child: Text(
+                          state == CharacterState.sleeping
+                              ? 'Esperando conexión con tu PC por Tailscale (${widget.client.wsUrl}).'
+                              : 'Escribe una tarea para ejecutarla en tu sesión activa de AGY o Claude.',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            color: Color(0xFF8B949E),
+                            fontSize: 13,
+                            height: 1.4,
+                          ),
+                        ),
+                      ),
+                    )
+                  : ListView.builder(
+                      controller: _scrollController,
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                      itemCount: widget.client.messages.length,
+                      itemBuilder: (context, index) {
+                        final msg = widget.client.messages[index];
+                        return _MessageBubble(
+                          message: msg,
+                          onCopy: () {
+                            Clipboard.setData(ClipboardData(text: msg.text));
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Texto copiado'),
+                                duration: Duration(seconds: 1),
+                              ),
+                            );
+                          },
+                          onDelete: () => widget.client.deleteMessage(msg.id),
+                        );
+                      },
+                    ),
             ),
 
             // Barra de entrada
@@ -490,6 +456,30 @@ class _CompanionScreenState extends State<CompanionScreen> {
       ),
     );
   }
+  void _onAvatarTap(CharacterState state) {
+    if (state == CharacterState.thinking || state == CharacterState.speaking) {
+      widget.client.stopExecution();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Deteniendo ejecución actual…'),
+          duration: Duration(seconds: 1),
+        ),
+      );
+      return;
+    }
+    if (state == CharacterState.sleeping) {
+      widget.client.connect();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Reconectando a Tailscale…'),
+          duration: Duration(seconds: 1),
+        ),
+      );
+      return;
+    }
+    _openOptionPicker('/model');
+  }
+
   void _openNotificationsInbox() {
     widget.client.markNotificationsRead();
     showModalBottomSheet<void>(
