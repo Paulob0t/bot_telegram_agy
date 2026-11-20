@@ -10,7 +10,7 @@ import 'package:path_provider/path_provider.dart';
 import '../models/agent_event.dart';
 import 'notifications.dart';
 
-const int currentAppBuildNumber = 2;
+const int currentAppBuildNumber = 3;
 
 /// Cliente WebSocket resiliente con reconexión exponencial y sincronización
 /// directa con la State Machine de Rive (`idle`, `listening`, `thinking`, `speaking`, `sleeping`).
@@ -46,7 +46,9 @@ class AgyWsClient extends ChangeNotifier {
     this.maxBackoffSeconds = 30,
   })  : _wsUrl = wsUrl.trim(),
         _bearerToken = bearerToken.trim(),
-        _userId = userId;
+        _userId = userId {
+    unawaited(_loadLocalHistory());
+  }
 
   String get wsUrl => _wsUrl;
   String get bearerToken => _bearerToken;
@@ -330,6 +332,7 @@ class AgyWsClient extends ChangeNotifier {
 
     if (ev.done) {
       _activeStreamingMsgId = null;
+      unawaited(_saveLocalHistory());
       if (ev.text.trim().isNotEmpty) {
         final lines = ev.text.trim().split('\n');
         final title = lines.first.length > 50
@@ -366,6 +369,49 @@ class AgyWsClient extends ChangeNotifier {
       connect();
     });
     notifyListeners();
+  }
+
+  Future<void> _loadLocalHistory() async {
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final f = File('${dir.path}/chat_history.json');
+      if (!await f.exists()) return;
+      final raw = await f.readAsString();
+      final list = jsonDecode(raw) as List<dynamic>;
+      if (_messages.isEmpty && list.isNotEmpty) {
+        for (final item in list) {
+          final m = item as Map<String, dynamic>;
+          _messages.add(ChatMessage(
+            id: m['id'] as String? ?? 'h_${_messages.length}',
+            isUser: m['is_user'] as bool? ?? false,
+            text: m['text'] as String? ?? '',
+            isError: m['is_error'] as bool? ?? false,
+            timestamp: DateTime.tryParse(m['ts'] as String? ?? '') ?? DateTime.now(),
+          ));
+        }
+        notifyListeners();
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _saveLocalHistory() async {
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final f = File('${dir.path}/chat_history.json');
+      final tail = _messages.length > 80
+          ? _messages.sublist(_messages.length - 80)
+          : _messages;
+      final data = tail
+          .map((m) => {
+                'id': m.id,
+                'is_user': m.isUser,
+                'text': m.text,
+                'is_error': m.isError,
+                'ts': m.timestamp.toIso8601String(),
+              })
+          .toList();
+      await f.writeAsString(jsonEncode(data), flush: true);
+    } catch (_) {}
   }
 
   Future<Map<String, dynamic>?> fetchOptions() async {
