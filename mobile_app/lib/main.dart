@@ -8,11 +8,11 @@ void main() {
 
   const defaultUrl = String.fromEnvironment(
     'AGY_WS_URL',
-    defaultValue: 'ws://127.0.0.1:8080/ws',
+    defaultValue: 'ws://100.90.208.26:8080/ws',
   );
   const defaultToken = String.fromEnvironment(
     'AGY_WS_TOKEN',
-    defaultValue: '',
+    defaultValue: 'agy_ws_0f7f9d32ac8e0cd248569b8c43f0ada3',
   );
 
   final client = AgyWsClient(

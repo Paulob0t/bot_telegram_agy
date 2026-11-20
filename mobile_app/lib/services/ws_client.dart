@@ -76,12 +76,27 @@ class AgyWsClient extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final ws = await WebSocket.connect(
-        _wsUrl,
-        headers: {
-          'Authorization': 'Bearer $_bearerToken',
-        },
-      ).timeout(connectTimeout);
+      WebSocket ws;
+      try {
+        ws = await WebSocket.connect(
+          _wsUrl,
+          headers: {
+            'Authorization': 'Bearer $_bearerToken',
+          },
+        ).timeout(connectTimeout);
+      } catch (_) {
+        // Si Tailscale no está encendido en el cel pero está por USB (adb reverse), probar 127.0.0.1
+        if (!_wsUrl.contains('127.0.0.1') && !_wsUrl.contains('localhost')) {
+          ws = await WebSocket.connect(
+            'ws://127.0.0.1:8080/ws',
+            headers: {
+              'Authorization': 'Bearer $_bearerToken',
+            },
+          ).timeout(const Duration(seconds: 2));
+        } else {
+          rethrow;
+        }
+      }
 
       if (_disposed || _manualDisconnect) {
         await ws.close();

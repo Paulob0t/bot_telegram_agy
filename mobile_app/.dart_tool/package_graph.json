@@ -72,6 +72,11 @@
       "dependencies": []
     },
     {
+      "name": "vector_math",
+      "version": "2.4.3",
+      "dependencies": []
+    },
+    {
       "name": "test_api",
       "version": "0.7.14",
       "dependencies": [
@@ -194,11 +199,6 @@
     {
       "name": "characters",
       "version": "1.4.1",
-      "dependencies": []
-    },
-    {
-      "name": "vector_math",
-      "version": "2.4.4",
       "dependencies": []
     },
     {
