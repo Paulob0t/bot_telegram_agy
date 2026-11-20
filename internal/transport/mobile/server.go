@@ -64,6 +64,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/notify", s.handleNotify)
 	mux.HandleFunc("/upload", s.handleUpload)
 	mux.HandleFunc("/scan", s.handleScan)
+	mux.HandleFunc("/options", s.handleOptions)
 	mux.HandleFunc("/version", s.handleVersion)
 	mux.HandleFunc("/apk", s.handleAPK)
 	return mux
@@ -275,6 +276,52 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(s.scanPCEnvironment())
+}
+
+func (s *Server) handleOptions(w http.ResponseWriter, r *http.Request) {
+	if !s.isAuthorized(r) {
+		http.Error(w, "no autorizado", http.StatusUnauthorized)
+		return
+	}
+	projs := projects.ListAvailableProjects(s.cfg)
+	type projItem struct {
+		Name string `json:"name"`
+		Path string `json:"path"`
+	}
+	var projList []projItem
+	for i, p := range projs {
+		if i >= 20 {
+			break
+		}
+		projList = append(projList, projItem{Name: p.Name, Path: p.Path})
+	}
+
+	type chatItem struct {
+		ID    string `json:"id"`
+		Title string `json:"title"`
+	}
+	var chatList []chatItem
+	if s.st.CurrentEngine == "claude" {
+		for _, cs := range chats.ListClaudeSessions(s.cfg, 15) {
+			chatList = append(chatList, chatItem{ID: cs.SessionID, Title: cs.Title})
+		}
+	} else {
+		for _, c := range chats.ListAgyConversations(s.cfg, 15) {
+			chatList = append(chatList, chatItem{ID: c.ConversationID, Title: c.Title})
+		}
+	}
+
+	_, activeModID, _ := models.GetEffectiveModelInfo(s.cfg, s.st)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ok":           true,
+		"engine":       s.st.CurrentEngine,
+		"active_model": activeModID,
+		"active_cwd":   s.st.CurrentCWD,
+		"models":       models.GetCatalog(s.cfg),
+		"projects":     projList,
+		"chats":        chatList,
+	})
 }
 
 func (s *Server) scanPCEnvironment() map[string]any {
@@ -552,6 +599,16 @@ func (s *Server) handleMobileCommand(ws *wsConn, rawText string) bool {
 		return true
 
 	case "/resume", "/chats":
+		if arg != "" {
+			if s.st.CurrentEngine == "claude" {
+				s.st.SetClaudeSession(arg, arg, s.st.CurrentCWD)
+			} else {
+				title := chats.GetAgyConversationTitle(s.cfg, arg)
+				s.st.SetAgyConversation(arg, "💬 "+title, "")
+			}
+			reply("✓ Chat activo cambiado.")
+			return true
+		}
 		var sb strings.Builder
 		if s.st.CurrentEngine == "claude" {
 			sb.WriteString("⌘ Sesiones recientes (Claude):")

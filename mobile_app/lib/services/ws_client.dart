@@ -10,7 +10,7 @@ import 'package:path_provider/path_provider.dart';
 import '../models/agent_event.dart';
 import 'notifications.dart';
 
-const int currentAppBuildNumber = 1;
+const int currentAppBuildNumber = 2;
 
 /// Cliente WebSocket resiliente con reconexión exponencial y sincronización
 /// directa con la State Machine de Rive (`idle`, `listening`, `thinking`, `speaking`, `sleeping`).
@@ -366,6 +366,21 @@ class AgyWsClient extends ChangeNotifier {
       connect();
     });
     notifyListeners();
+  }
+
+  Future<Map<String, dynamic>?> fetchOptions() async {
+    try {
+      final wsUri = Uri.parse(_wsUrl);
+      final scheme = wsUri.scheme == 'wss' ? 'https' : 'http';
+      final optUri = wsUri.replace(scheme: scheme, path: '/options');
+      final res = await http
+          .get(optUri, headers: {'Authorization': 'Bearer $_bearerToken'})
+          .timeout(const Duration(seconds: 5));
+      if (res.statusCode == 200) {
+        return jsonDecode(res.body) as Map<String, dynamic>;
+      }
+    } catch (_) {}
+    return null;
   }
 
   Future<void> _checkAndInstallUpdate() async {

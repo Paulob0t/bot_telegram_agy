@@ -71,7 +71,7 @@ class _CompanionScreenState extends State<CompanionScreen> {
   Future<void> _pickAndUploadFile() async {
     if (!widget.client.isConnected) return;
     final res = await FilePicker.pickFiles(type: FileType.any);
-    if (res == null || res.isEmpty) return;
+    if (res.isEmpty) return;
     final file = res.first;
     final path = file.path;
     if (path == null || !mounted) return;
@@ -433,6 +433,118 @@ class _CompanionScreenState extends State<CompanionScreen> {
       ),
     );
   }
+  Future<void> _openOptionPicker(String cmd) async {
+    final data = await widget.client.fetchOptions();
+    if (!mounted || data == null) return;
+
+    final String title;
+    final List<({String label, String sub, String command, bool active})> items = [];
+
+    if (cmd == '/model') {
+      title = 'Seleccionar Modelo';
+      final activeMod = data['active_model'] as String? ?? '';
+      for (final m in (data['models'] as List? ?? [])) {
+        final id = m['id'] as String? ?? '';
+        final name = m['name'] as String? ?? id;
+        items.add((
+          label: name,
+          sub: id,
+          command: '/model $id',
+          active: id == activeMod,
+        ));
+      }
+    } else if (cmd == '/project') {
+      title = 'Seleccionar Proyecto';
+      final activeCwd = data['active_cwd'] as String? ?? '';
+      for (final p in (data['projects'] as List? ?? [])) {
+        final name = p['name'] as String? ?? '';
+        final path = p['path'] as String? ?? '';
+        items.add((
+          label: name,
+          sub: path,
+          command: '/cd $name',
+          active: path == activeCwd,
+        ));
+      }
+    } else {
+      title = 'Seleccionar Chat';
+      for (final c in (data['chats'] as List? ?? [])) {
+        final id = c['id'] as String? ?? '';
+        final cTitle = c['title'] as String? ?? id;
+        items.add((
+          label: cTitle,
+          sub: id,
+          command: '/resume $id',
+          active: false,
+        ));
+      }
+    }
+
+    if (!mounted) return;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF1A1D21),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 10),
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    color: Color(0xFFE6EDF3),
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              const Divider(color: Color(0xFF21262D), height: 1),
+              Flexible(
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: items.length,
+                  itemBuilder: (_, idx) {
+                    final it = items[idx];
+                    return ListTile(
+                      leading: Icon(
+                        it.active ? Icons.check_circle : Icons.circle_outlined,
+                        color: it.active
+                            ? const Color(0xFF3FB950)
+                            : const Color(0xFF6E7681),
+                        size: 20,
+                      ),
+                      title: Text(
+                        it.label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: Color(0xFFE6EDF3), fontSize: 14),
+                      ),
+                      subtitle: Text(
+                        it.sub,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: Color(0xFF6E7681), fontSize: 11),
+                      ),
+                      onTap: () {
+                        Navigator.of(ctx).pop();
+                        widget.client.sendPrompt(it.command);
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildCommandsDrawer() {
     final commands = [
       (Icons.radar, 'Escanear PC y proyectos', '/scan'),
@@ -482,6 +594,10 @@ class _CompanionScreenState extends State<CompanionScreen> {
                         Navigator.of(context).pop();
                         if (item.$3 == '/stop') {
                           widget.client.stopExecution();
+                        } else if (item.$3 == '/model' ||
+                            item.$3 == '/project' ||
+                            item.$3 == '/resume') {
+                          _openOptionPicker(item.$3);
                         } else {
                           widget.client.sendPrompt(item.$3);
                         }
