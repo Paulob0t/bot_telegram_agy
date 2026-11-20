@@ -1,6 +1,10 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../models/agent_event.dart';
 import '../services/ws_client.dart';
@@ -45,6 +49,52 @@ class _CompanionScreenState extends State<CompanionScreen> {
     super.initState();
     widget.client.addListener(_onClientUpdated);
     _inputController.addListener(_onTextChanged);
+    _loadAvatarPrefs();
+  }
+
+  Future<File> _prefsFile() async {
+    final dir = await getApplicationDocumentsDirectory();
+    return File('${dir.path}/companion_prefs.json');
+  }
+
+  Future<void> _loadAvatarPrefs() async {
+    try {
+      final file = await _prefsFile();
+      if (!await file.exists()) return;
+      final data = jsonDecode(await file.readAsString()) as Map<String, dynamic>;
+      if (!mounted) return;
+      setState(() {
+        final name = data['assistantName'] as String?;
+        if (name != null && name.isNotEmpty) _assistantName = name;
+        final styleIdx = data['avatarStyle'] as int?;
+        if (styleIdx != null && styleIdx >= 0 && styleIdx < AvatarStyle.values.length) {
+          _avatarStyle = AvatarStyle.values[styleIdx];
+        }
+        final accIdx = data['avatarAccessory'] as int?;
+        if (accIdx != null && accIdx >= 0 && accIdx < AvatarAccessory.values.length) {
+          _avatarAccessory = AvatarAccessory.values[accIdx];
+        }
+        final accentVal = data['avatarAccent'] as int?;
+        if (accentVal != null) _avatarAccent = Color(accentVal);
+        final riv = data['customRivePath'] as String?;
+        if (riv != null && riv.isNotEmpty && File(riv).existsSync()) {
+          _customRivePath = riv;
+        }
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _saveAvatarPrefs() async {
+    try {
+      final file = await _prefsFile();
+      await file.writeAsString(jsonEncode({
+        'assistantName': _assistantName,
+        'avatarStyle': _avatarStyle.index,
+        'avatarAccessory': _avatarAccessory.index,
+        'avatarAccent': _avatarAccent?.toARGB32(),
+        'customRivePath': _customRivePath,
+      }));
+    } catch (_) {}
   }
 
   void _onTextChanged() {
@@ -261,6 +311,7 @@ class _CompanionScreenState extends State<CompanionScreen> {
                   final nextName = nameCtrl.text.trim();
                   if (nextName.isNotEmpty) {
                     setState(() => _assistantName = nextName);
+                    _saveAvatarPrefs();
                   }
                   widget.client.updateCredentials(
                     wsUrl: urlCtrl.text,
@@ -962,6 +1013,7 @@ class _CompanionScreenState extends State<CompanionScreen> {
                           _avatarStyle = s;
                           _customRivePath = null;
                         });
+                        _saveAvatarPrefs();
                         setSheetState(() {});
                       },
                     ),
@@ -979,6 +1031,7 @@ class _CompanionScreenState extends State<CompanionScreen> {
                       selected: _avatarAccessory == a,
                       onSelected: (_) {
                         setState(() => _avatarAccessory = a);
+                        _saveAvatarPrefs();
                         setSheetState(() {});
                       },
                     ),
@@ -993,6 +1046,7 @@ class _CompanionScreenState extends State<CompanionScreen> {
                     GestureDetector(
                       onTap: () {
                         setState(() => _avatarAccent = c);
+                        _saveAvatarPrefs();
                         setSheetState(() {});
                       },
                       child: Container(
@@ -1019,6 +1073,7 @@ class _CompanionScreenState extends State<CompanionScreen> {
                   final path = picked.first.path;
                   if (path == null || !path.toLowerCase().endsWith('.riv')) return;
                   setState(() => _customRivePath = path);
+                  _saveAvatarPrefs();
                   if (sheetCtx.mounted) Navigator.of(sheetCtx).pop();
                 },
                 icon: const Icon(Icons.upload_file, size: 18),

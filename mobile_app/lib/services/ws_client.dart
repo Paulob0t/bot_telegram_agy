@@ -10,7 +10,7 @@ import 'package:path_provider/path_provider.dart';
 import '../models/agent_event.dart';
 import 'notifications.dart';
 
-const int currentAppBuildNumber = 18;
+const int currentAppBuildNumber = 19;
 
 /// Cliente WebSocket resiliente con reconexión exponencial y sincronización
 /// directa con la State Machine de Rive (`idle`, `listening`, `thinking`, `speaking`, `sleeping`).
@@ -176,6 +176,10 @@ class AgyWsClient extends ChangeNotifier {
   bool sendPrompt(String rawText) {
     final text = rawText.trim();
     if (text.isEmpty || !isConnected) return false;
+
+    if (text == '/new' || text.startsWith('/resume ')) {
+      _messages.clear();
+    }
 
     final now = DateTime.now();
     _messages.add(

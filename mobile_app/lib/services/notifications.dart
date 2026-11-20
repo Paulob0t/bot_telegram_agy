@@ -9,7 +9,7 @@ class LocalNotifier {
   static Future<void> init() async {
     if (_initialized) return;
     try {
-      const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
+      const androidInit = AndroidInitializationSettings('@drawable/ic_notification');
       const initSettings = InitializationSettings(android: androidInit);
       await _plugin.initialize(initSettings);
 
@@ -29,6 +29,7 @@ class LocalNotifier {
         'paulobot_tasks',
         'Tareas AGY y Claude',
         channelDescription: 'Notificaciones cuando termina una tarea en tu PC',
+        icon: '@drawable/ic_notification',
         importance: Importance.high,
         priority: Priority.high,
       );

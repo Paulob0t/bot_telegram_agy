@@ -5,7 +5,7 @@
   "packages": [
     {
       "name": "paulobot_mobile",
-      "version": "1.0.17+18",
+      "version": "1.0.18+19",
       "dependencies": [
         "file_picker",
         "flutter",
