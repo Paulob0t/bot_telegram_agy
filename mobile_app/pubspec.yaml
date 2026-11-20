@@ -10,7 +10,7 @@ dependencies:
   flutter:
     sdk: flutter
   rive: ^0.13.20
-  file_picker: ^8.1.7
+  file_picker: ^13.4.0
   http: ^1.2.2
   flutter_local_notifications: ^18.0.1
   open_filex: ^4.5.0

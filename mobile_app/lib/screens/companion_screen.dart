@@ -70,9 +70,9 @@ class _CompanionScreenState extends State<CompanionScreen> {
 
   Future<void> _pickAndUploadFile() async {
     if (!widget.client.isConnected) return;
-    final res = await FilePicker.platform.pickFiles(type: FileType.any);
-    if (res == null || res.files.isEmpty) return;
-    final file = res.files.first;
+    final res = await FilePicker.pickFiles(type: FileType.any);
+    if (res == null || res.isEmpty) return;
+    final file = res.first;
     final path = file.path;
     if (path == null || !mounted) return;
 
