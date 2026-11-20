@@ -16,7 +16,7 @@ void main() {
     await tester.pumpWidget(PaulobotCompanionApp(client: client));
 
     expect(find.byType(RiveCompanionAvatar), findsOneWidget);
-    expect(find.textContaining('Paulobot · AGY Core'), findsOneWidget);
+    expect(find.textContaining('Asistente AGY'), findsOneWidget);
     expect(find.textContaining('PC suspendida / desconectada'), findsOneWidget);
     expect(client.characterState, CharacterState.sleeping);
 
@@ -25,7 +25,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 350));
 
-    expect(find.text('Nodo Tailscale (Go Core)'), findsOneWidget);
+    expect(find.text('Configuración del Asistente'), findsOneWidget);
     expect(find.text('Guardar y Reconectar'), findsOneWidget);
 
     client.dispose();

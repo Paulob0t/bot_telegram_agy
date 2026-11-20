@@ -20,6 +20,7 @@ class _CompanionScreenState extends State<CompanionScreen> {
   final TextEditingController _inputController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   int _lastMsgCount = 0;
+  String _assistantName = 'Asistente AGY';
 
   @override
   void initState() {
@@ -67,6 +68,7 @@ class _CompanionScreenState extends State<CompanionScreen> {
   }
 
   void _openConnectionSheet() {
+    final nameCtrl = TextEditingController(text: _assistantName);
     final urlCtrl = TextEditingController(text: widget.client.wsUrl);
     final tokCtrl = TextEditingController(text: widget.client.bearerToken);
 
@@ -90,7 +92,7 @@ class _CompanionScreenState extends State<CompanionScreen> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const Text(
-                'Nodo Tailscale (Go Core)',
+                'Configuración del Asistente',
                 style: TextStyle(
                   color: Color(0xFFE6EDF3),
                   fontSize: 16,
@@ -98,6 +100,21 @@ class _CompanionScreenState extends State<CompanionScreen> {
                 ),
               ),
               const SizedBox(height: 14),
+              TextField(
+                controller: nameCtrl,
+                style: const TextStyle(color: Color(0xFFE6EDF3), fontSize: 14),
+                decoration: const InputDecoration(
+                  labelText: 'Nombre del asistente',
+                  labelStyle: TextStyle(color: Color(0xFF8B949E)),
+                  enabledBorder: OutlineInputBorder(
+                    borderSide: BorderSide(color: Color(0xFF30363D)),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderSide: BorderSide(color: Color(0xFFD97757)),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
               TextField(
                 controller: urlCtrl,
                 style: const TextStyle(color: Color(0xFFE6EDF3), fontSize: 14),
@@ -139,6 +156,10 @@ class _CompanionScreenState extends State<CompanionScreen> {
                 ),
                 onPressed: () {
                   Navigator.of(ctx).pop();
+                  final nextName = nameCtrl.text.trim();
+                  if (nextName.isNotEmpty) {
+                    setState(() => _assistantName = nextName);
+                  }
                   widget.client.updateCredentials(
                     wsUrl: urlCtrl.text,
                     bearerToken: tokCtrl.text,
@@ -180,29 +201,33 @@ class _CompanionScreenState extends State<CompanionScreen> {
 
     return Scaffold(
       backgroundColor: const Color(0xFF111315),
+      drawer: _buildCommandsDrawer(),
       appBar: AppBar(
         backgroundColor: const Color(0xFF111315),
         elevation: 0,
-        titleSpacing: 16,
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Paulobot · AGY Core',
-              style: TextStyle(
-                color: Color(0xFFE6EDF3),
-                fontSize: 15,
-                fontWeight: FontWeight.w600,
+        iconTheme: const IconThemeData(color: Color(0xFF8B949E)),
+        title: GestureDetector(
+          onTap: _openConnectionSheet,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                _assistantName,
+                style: const TextStyle(
+                  color: Color(0xFFE6EDF3),
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
-            ),
-            Text(
-              _stateLabel(state),
-              style: const TextStyle(
-                color: Color(0xFF8B949E),
-                fontSize: 12,
+              Text(
+                _stateLabel(state),
+                style: const TextStyle(
+                  color: Color(0xFF8B949E),
+                  fontSize: 12,
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
         actions: [
           if (busy)
@@ -294,7 +319,7 @@ class _CompanionScreenState extends State<CompanionScreen> {
                       ),
                       decoration: InputDecoration(
                         hintText: widget.client.isConnected
-                            ? 'Enviar comando o consulta a AGY...'
+                            ? 'Escribe un mensaje...'
                             : 'Sin conexión con el servidor Go...',
                         hintStyle: const TextStyle(
                           color: Color(0xFF6E7681),
@@ -333,6 +358,67 @@ class _CompanionScreenState extends State<CompanionScreen> {
                     ),
                     icon: const Icon(Icons.send_rounded, size: 18),
                   ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+  Widget _buildCommandsDrawer() {
+    final commands = [
+      (Icons.info_outline, 'Estado del sistema', '/status'),
+      (Icons.folder_outlined, 'Cambiar proyecto', '/project'),
+      (Icons.memory, 'Cambiar modelo', '/model'),
+      (Icons.history, 'Historial de chats', '/resume'),
+      (Icons.add_comment_outlined, 'Nuevo chat limpio', '/new'),
+      (Icons.data_usage, 'Cuotas de tokens', '/tokens'),
+      (Icons.stop_circle_outlined, 'Detener ejecución', '/stop'),
+    ];
+
+    return Drawer(
+      backgroundColor: const Color(0xFF15181C),
+      child: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 20, 20, 12),
+              child: Text(
+                'Comandos rápidos',
+                style: TextStyle(
+                  color: Color(0xFFE6EDF3),
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            const Divider(color: Color(0xFF21262D), height: 1),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                children: [
+                  for (final item in commands)
+                    ListTile(
+                      leading: Icon(item.$1, color: const Color(0xFF8B949E), size: 20),
+                      title: Text(
+                        item.$2,
+                        style: const TextStyle(color: Color(0xFFE6EDF3), fontSize: 14),
+                      ),
+                      subtitle: Text(
+                        item.$3,
+                        style: const TextStyle(color: Color(0xFF6E7681), fontSize: 12),
+                      ),
+                      onTap: () {
+                        Navigator.of(context).pop();
+                        if (item.$3 == '/stop') {
+                          widget.client.stopExecution();
+                        } else {
+                          widget.client.sendPrompt(item.$3);
+                        }
+                      },
+                    ),
                 ],
               ),
             ),
