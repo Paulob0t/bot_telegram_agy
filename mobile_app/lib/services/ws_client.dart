@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import '../models/agent_event.dart';
 
 /// Cliente WebSocket resiliente con reconexión exponencial y sincronización
@@ -200,6 +201,58 @@ class AgyWsClient extends ChangeNotifier {
     try {
       _socket!.add(payload);
     } catch (_) {}
+  }
+
+  /// Sube una foto, PDF o archivo al servidor Go (`POST /upload`) y opcionalmente lo analiza con IA.
+  Future<bool> uploadFile(
+    String filePath, {
+    String target = 'cache',
+    bool analyzeWithAI = false,
+    String caption = '',
+  }) async {
+    try {
+      final wsUri = Uri.parse(_wsUrl);
+      final scheme = wsUri.scheme == 'wss' ? 'https' : 'http';
+      final uploadUri = wsUri.replace(scheme: scheme, path: '/upload');
+
+      final req = http.MultipartRequest('POST', uploadUri);
+      req.headers['Authorization'] = 'Bearer $_bearerToken';
+      req.fields['target'] = target;
+      req.files.add(await http.MultipartFile.fromPath('file', filePath));
+
+      final streamed = await req.send().timeout(const Duration(seconds: 30));
+      final body = await streamed.stream.bytesToString();
+      if (streamed.statusCode >= 400) {
+        _lastError = 'Error subiendo archivo (${streamed.statusCode})';
+        notifyListeners();
+        return false;
+      }
+      final decoded = jsonDecode(body) as Map<String, dynamic>;
+      final savedPath = decoded['path'] as String? ?? filePath;
+      final fileName = decoded['file_name'] as String? ?? 'archivo';
+
+      if (analyzeWithAI) {
+        final instr = caption.trim().isNotEmpty
+            ? caption.trim()
+            : 'Por favor analiza este archivo.';
+        return sendPrompt('[Archivo adjunto guardado en: $savedPath]\n\n$instr');
+      }
+
+      _messages.add(
+        ChatMessage(
+          id: 'up_${DateTime.now().microsecondsSinceEpoch}',
+          isUser: false,
+          text: '✅ Archivo `$fileName` guardado en:\n`$savedPath`',
+          timestamp: DateTime.now(),
+        ),
+      );
+      notifyListeners();
+      return true;
+    } catch (err) {
+      _lastError = err.toString();
+      notifyListeners();
+      return false;
+    }
   }
 
   void _onRawFrame(dynamic raw) {

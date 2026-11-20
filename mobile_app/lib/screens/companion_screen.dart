@@ -1,3 +1,4 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../models/agent_event.dart';
@@ -65,6 +66,67 @@ class _CompanionScreenState extends State<CompanionScreen> {
     if (widget.client.sendPrompt(text)) {
       _inputController.clear();
     }
+  }
+
+  Future<void> _pickAndUploadFile() async {
+    if (!widget.client.isConnected) return;
+    final res = await FilePicker.platform.pickFiles(type: FileType.any);
+    if (res == null || res.files.isEmpty) return;
+    final file = res.files.first;
+    final path = file.path;
+    if (path == null || !mounted) return;
+
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF1A1D21),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+                child: Text(
+                  'Archivo: ${file.name}',
+                  style: const TextStyle(
+                    color: Color(0xFFE6EDF3),
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              ListTile(
+                leading: const Icon(Icons.auto_awesome, color: Color(0xFFD97757)),
+                title: const Text('Analizar con IA', style: TextStyle(color: Color(0xFFE6EDF3))),
+                onTap: () {
+                  Navigator.of(ctx).pop();
+                  widget.client.uploadFile(path, target: 'cache', analyzeWithAI: true);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.folder_outlined, color: Color(0xFF58A6FF)),
+                title: const Text('Guardar en proyecto (cwd)', style: TextStyle(color: Color(0xFFE6EDF3))),
+                onTap: () {
+                  Navigator.of(ctx).pop();
+                  widget.client.uploadFile(path, target: 'cwd');
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.download_outlined, color: Color(0xFF3FB950)),
+                title: const Text('Guardar en ~/Downloads', style: TextStyle(color: Color(0xFFE6EDF3))),
+                onTap: () {
+                  Navigator.of(ctx).pop();
+                  widget.client.uploadFile(path, target: 'downloads');
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   void _openConnectionSheet() {
@@ -309,6 +371,11 @@ class _CompanionScreenState extends State<CompanionScreen> {
               ),
               child: Row(
                 children: [
+                  IconButton(
+                    tooltip: 'Adjuntar foto o PDF',
+                    onPressed: widget.client.isConnected ? _pickAndUploadFile : null,
+                    icon: const Icon(Icons.attach_file, color: Color(0xFF8B949E), size: 20),
+                  ),
                   Expanded(
                     child: TextField(
                       controller: _inputController,
@@ -368,6 +435,7 @@ class _CompanionScreenState extends State<CompanionScreen> {
   }
   Widget _buildCommandsDrawer() {
     final commands = [
+      (Icons.radar, 'Escanear PC y proyectos', '/scan'),
       (Icons.info_outline, 'Estado del sistema', '/status'),
       (Icons.folder_outlined, 'Cambiar proyecto', '/project'),
       (Icons.memory, 'Cambiar modelo', '/model'),

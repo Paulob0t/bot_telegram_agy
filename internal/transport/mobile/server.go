@@ -6,9 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -16,7 +20,9 @@ import (
 	"telegram-paulobot/internal/agent"
 	"telegram-paulobot/internal/chats"
 	"telegram-paulobot/internal/config"
+	"telegram-paulobot/internal/guard"
 	"telegram-paulobot/internal/models"
+	"telegram-paulobot/internal/obsidian"
 	"telegram-paulobot/internal/projects"
 	"telegram-paulobot/internal/state"
 	"telegram-paulobot/internal/tokens"
@@ -56,6 +62,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/ws", s.handleWS)
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/notify", s.handleNotify)
+	mux.HandleFunc("/upload", s.handleUpload)
+	mux.HandleFunc("/scan", s.handleScan)
 	return mux
 }
 
@@ -195,6 +203,108 @@ func (s *Server) handleNotify(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write([]byte(`{"ok":true}`))
+}
+
+func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
+	if !s.isAuthorized(r) {
+		http.Error(w, "no autorizado", http.StatusUnauthorized)
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "método no permitido", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		http.Error(w, "multipart inválido", http.StatusBadRequest)
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		http.Error(w, "falta campo file", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+
+	target := strings.ToLower(strings.TrimSpace(r.FormValue("target")))
+	fn := strings.ReplaceAll(filepath.Base(header.Filename), " ", "_")
+	if fn == "" || fn == "." {
+		fn = fmt.Sprintf("upload_%d", time.Now().Unix())
+	}
+
+	uploadsDir := guard.PrepareUploadsDir(s.cfg.HomeDir)
+	cachePath := filepath.Join(uploadsDir, fmt.Sprintf("%d_%s", time.Now().Unix(), fn))
+	out, err := os.Create(cachePath)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if _, err := io.Copy(out, file); err != nil {
+		_ = out.Close()
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	_ = out.Close()
+
+	finalPath := cachePath
+	switch target {
+	case "cwd":
+		if dest, err := obsidian.SaveFileToDir(cachePath, s.st.CurrentCWD, fn); err == nil {
+			finalPath = dest
+		}
+	case "downloads":
+		dlDir := filepath.Join(s.cfg.HomeDir, "Downloads")
+		if dest, err := obsidian.SaveFileToDir(cachePath, dlDir, fn); err == nil {
+			finalPath = dest
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ok":        true,
+		"path":      finalPath,
+		"file_name": fn,
+	})
+}
+
+func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
+	if !s.isAuthorized(r) {
+		http.Error(w, "no autorizado", http.StatusUnauthorized)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(s.scanPCEnvironment())
+}
+
+func (s *Server) scanPCEnvironment() map[string]any {
+	projs := projects.ListAvailableProjects(s.cfg)
+	var projNames []string
+	for i, p := range projs {
+		if i >= 12 {
+			break
+		}
+		projNames = append(projNames, p.Name)
+	}
+
+	var clis []string
+	for _, bin := range []string{"agy", "claude", "git", "go", "flutter", "node"} {
+		if _, err := exec.LookPath(bin); err == nil {
+			clis = append(clis, bin)
+		}
+	}
+
+	effDisp, _, _ := models.GetEffectiveModelInfo(s.cfg, s.st)
+	return map[string]any{
+		"ok":            true,
+		"engine":        s.st.CurrentEngine,
+		"model":         effDisp,
+		"cwd":           s.st.CurrentCWD,
+		"cwd_short":     s.st.GetCWDShortName(s.st.CurrentCWD),
+		"projects":      projNames,
+		"total_projs":   len(projs),
+		"clis":          clis,
+		"tailscale_ip":  config.DetectTailscaleIPv4(),
+		"telegram_on":   s.cfg.EnableTelegram,
+	}
 }
 
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
@@ -405,6 +515,16 @@ func (s *Server) handleMobileCommand(ws *wsConn, rawText string) bool {
 			}
 		}
 		reply(sb.String())
+		return true
+
+	case "/scan":
+		sc := s.scanPCEnvironment()
+		projs, _ := sc["projects"].([]string)
+		clis, _ := sc["clis"].([]string)
+		reply(fmt.Sprintf(
+			"🔍 Escaneo de PC completado:\n• Motor: %s · Modelo: %v\n• Proyecto activo: %v\n• Proyectos (%v): %s\n• CLIs detectados: %s",
+			sc["engine"], sc["model"], sc["cwd_short"], sc["total_projs"], strings.Join(projs, ", "), strings.Join(clis, ", "),
+		))
 		return true
 
 	case "/tokens", "/usage":
