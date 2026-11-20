@@ -2,13 +2,16 @@ package hooks
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"telegram-paulobot/internal/config"
 	"telegram-paulobot/internal/desktop"
@@ -67,8 +70,11 @@ func RunAgyHook(cfg *config.Config, st *state.BotSessionState) {
 		msg += fmt.Sprintf("\n`%s`", clip(payload.Error, 120))
 	}
 
-	tg := telegram.New(cfg.Token)
-	_, _ = tg.SendMessage(cfg.AuthorizedUserID, msg, nil)
+	if cfg.EnableTelegram {
+		tg := telegram.New(cfg.Token)
+		_, _ = tg.SendMessage(cfg.AuthorizedUserID, msg, nil)
+	}
+	notifyMobileApp(cfg, fmt.Sprintf("✓ [Claude] %s · %s", title, wsName), formatFullResponse(body))
 }
 
 func RunClaudeHook(cfg *config.Config, st *state.BotSessionState) {
@@ -114,8 +120,11 @@ func RunClaudeHook(cfg *config.Config, st *state.BotSessionState) {
 		msg += "\n\n" + cleanBody
 	}
 
-	tg := telegram.New(cfg.Token)
-	_, _ = tg.SendMessage(cfg.AuthorizedUserID, msg, nil)
+	if cfg.EnableTelegram {
+		tg := telegram.New(cfg.Token)
+		_, _ = tg.SendMessage(cfg.AuthorizedUserID, msg, nil)
+	}
+	notifyMobileApp(cfg, fmt.Sprintf("✓ [Claude] %s · %s", title, wsName), formatFullResponse(body))
 }
 
 func RunNotifyCLI(cfg *config.Config, st *state.BotSessionState, args []string) int {
@@ -261,4 +270,25 @@ func clip(s string, limit int) string {
 		return s
 	}
 	return strings.TrimRight(string(runes[:limit]), " ,;:.") + "…"
+}
+
+func notifyMobileApp(cfg *config.Config, title, body string) {
+	tok := strings.TrimSpace(cfg.MobileWSToken)
+	if tok == "" {
+		return
+	}
+	payload, _ := json.Marshal(map[string]string{
+		"title": title,
+		"body":  body,
+	})
+	req, err := http.NewRequest(http.MethodPost, "http://127.0.0.1:8080/notify", bytes.NewReader(payload))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+tok)
+	client := &http.Client{Timeout: 2 * time.Second}
+	if resp, err := client.Do(req); err == nil {
+		_ = resp.Body.Close()
+	}
 }

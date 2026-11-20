@@ -65,7 +65,12 @@ func main() {
 	defer stop()
 
 	ag := agent.New(cfg, st)
-	go mobile.NewServer(cfg, ag).Run(ctx)
+	wsSrv := mobile.NewServer(cfg, ag, st)
+	if !cfg.EnableTelegram {
+		wsSrv.Run(ctx)
+		return
+	}
 
+	go wsSrv.Run(ctx)
 	bot.New(cfg, st, ag).Run(ctx)
 }

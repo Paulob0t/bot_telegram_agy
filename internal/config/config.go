@@ -15,6 +15,7 @@ import (
 type Config struct {
 	Token                   string
 	AuthorizedUserID        int64
+	EnableTelegram          bool
 	MobileWSAddr            string
 	MobileWSToken           string
 	HomeDir                 string
@@ -55,9 +56,12 @@ func Load(projectRoot string) (*Config, error) {
 
 	baseCLIDir := filepath.Join(homeDir, ".gemini", "antigravity-cli")
 
+	enableTG := !strings.EqualFold(envOr("ENABLE_TELEGRAM", "true"), "false")
+
 	return &Config{
 		Token:                  token,
 		AuthorizedUserID:       authID,
+		EnableTelegram:         enableTG,
 		MobileWSAddr:           envOr("MOBILE_WS_ADDR", ""),
 		MobileWSToken:          envOr("MOBILE_WS_TOKEN", token),
 		HomeDir:                homeDir,

@@ -14,7 +14,12 @@ import (
 	"time"
 
 	"telegram-paulobot/internal/agent"
+	"telegram-paulobot/internal/chats"
 	"telegram-paulobot/internal/config"
+	"telegram-paulobot/internal/models"
+	"telegram-paulobot/internal/projects"
+	"telegram-paulobot/internal/state"
+	"telegram-paulobot/internal/tokens"
 )
 
 const (
@@ -25,15 +30,23 @@ const (
 
 type Server struct {
 	cfg   *config.Config
+	st    *state.BotSessionState
 	agent *agent.Service
 
 	mu          sync.RWMutex
 	activeAddrs []string
 }
 
-func NewServer(cfg *config.Config, ag *agent.Service) *Server {
+func NewServer(cfg *config.Config, ag *agent.Service, stOpt ...*state.BotSessionState) *Server {
+	var st *state.BotSessionState
+	if len(stOpt) > 0 && stOpt[0] != nil {
+		st = stOpt[0]
+	} else {
+		st = state.New(cfg)
+	}
 	return &Server{
 		cfg:   cfg,
+		st:    st,
 		agent: ag,
 	}
 }
@@ -42,6 +55,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", s.handleWS)
 	mux.HandleFunc("/health", s.handleHealth)
+	mux.HandleFunc("/notify", s.handleNotify)
 	return mux
 }
 
@@ -151,6 +165,38 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleNotify(w http.ResponseWriter, r *http.Request) {
+	if !s.isAuthorized(r) {
+		http.Error(w, "no autorizado", http.StatusUnauthorized)
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "método no permitido", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Title string `json:"title"`
+		Body  string `json:"body"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "JSON inválido", http.StatusBadRequest)
+		return
+	}
+	msg := strings.TrimSpace(body.Title)
+	if b := strings.TrimSpace(body.Body); b != "" {
+		if msg != "" {
+			msg += "\n\n" + b
+		} else {
+			msg = b
+		}
+	}
+	if msg != "" {
+		s.agent.EmitExternalNotification(msg)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(`{"ok":true}`))
+}
+
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	if !s.isAuthorized(r) {
 		http.Error(w, "Bearer token inválido o ausente", http.StatusUnauthorized)
@@ -247,10 +293,130 @@ func (s *Server) processClientMessage(ctx context.Context, ws *wsConn, raw []byt
 		return
 	}
 
+	if strings.HasPrefix(text, "/") && s.handleMobileCommand(ws, text) {
+		return
+	}
+
 	req.Source = "mobile"
 	go func() {
 		_, _ = s.agent.Execute(ctx, req, nil)
 	}()
+}
+
+func (s *Server) handleMobileCommand(ws *wsConn, rawText string) bool {
+	fields := strings.Fields(rawText)
+	if len(fields) == 0 {
+		return false
+	}
+	cmd := strings.ToLower(fields[0])
+	arg := strings.TrimSpace(strings.TrimPrefix(rawText, fields[0]))
+
+	reply := func(msg string) {
+		_ = ws.WriteJSON(agent.Event{
+			Type: agent.EventTypeChunk,
+			Text: msg,
+			Done: true,
+		})
+	}
+
+	switch cmd {
+	case "/status", "/start":
+		effDisp, _, ctxWin := models.GetEffectiveModelInfo(s.cfg, s.st)
+		summary := projects.FormatActiveCWDSummary(s.st.CurrentCWD)
+		reply(fmt.Sprintf(
+			"◆ Motor: %s\n• Modelo: %s (%s · %dk ctx)\n• Proyecto:\n%s",
+			s.st.CurrentEngine, effDisp, strings.ToUpper(s.st.CurrentEffort), ctxWin/1000, summary,
+		))
+		return true
+
+	case "/agy":
+		s.st.CurrentEngine = "agy"
+		_ = s.st.Save()
+		reply("🔵 Motor cambiado a Antigravity (AGY).")
+		return true
+
+	case "/claude":
+		s.st.CurrentEngine = "claude"
+		_ = s.st.Save()
+		reply("🟠 Motor cambiado a Claude Code.")
+		return true
+
+	case "/new", "/nuevo":
+		if s.st.CurrentEngine == "claude" {
+			s.st.SetClaudeSession("NEW", "➕ Nuevo chat Claude", s.st.CurrentCWD)
+		} else {
+			s.st.SetAgyConversation("NEW", "➕ Nuevo chat independiente", s.st.CurrentCWD)
+		}
+		reply("🆕 Nuevo chat preparado en " + s.st.GetCWDShortName(s.st.CurrentCWD))
+		return true
+
+	case "/project", "/cd":
+		if arg != "" {
+			for _, p := range projects.ListAvailableProjects(s.cfg) {
+				if strings.EqualFold(p.Name, arg) || strings.Contains(strings.ToLower(p.Name), strings.ToLower(arg)) {
+					s.st.SetCWD(p.Path)
+					reply("✓ Proyecto cambiado:\n" + projects.FormatActiveCWDSummary(p.Path))
+					return true
+				}
+			}
+		}
+		var sb strings.Builder
+		sb.WriteString("📂 Proyecto actual: " + s.st.GetCWDShortName(s.st.CurrentCWD) + "\n\nProyectos recientes (escribe `/cd <nombre>`):")
+		for i, p := range projects.ListAvailableProjects(s.cfg) {
+			if i >= 10 {
+				break
+			}
+			sb.WriteString("\n• " + p.Name)
+		}
+		reply(sb.String())
+		return true
+
+	case "/model", "/modelo":
+		if arg != "" {
+			s.st.CurrentModel = arg
+			_ = s.st.Save()
+			effDisp, _, _ := models.GetEffectiveModelInfo(s.cfg, s.st)
+			reply("✓ Modelo cambiado a: " + effDisp)
+			return true
+		}
+		effDisp, _, _ := models.GetEffectiveModelInfo(s.cfg, s.st)
+		var sb strings.Builder
+		sb.WriteString("🤖 Modelo actual: " + effDisp + "\n\nModelos (escribe `/model <id>`):")
+		for i, m := range models.GetCatalog(s.cfg) {
+			if i >= 12 {
+				break
+			}
+			sb.WriteString(fmt.Sprintf("\n• %s (`%s`)", m.Name, m.ID))
+		}
+		reply(sb.String())
+		return true
+
+	case "/resume", "/chats":
+		var sb strings.Builder
+		if s.st.CurrentEngine == "claude" {
+			sb.WriteString("⌘ Sesiones recientes (Claude):")
+			for _, cs := range chats.ListClaudeSessions(s.cfg, 6) {
+				sb.WriteString("\n• " + cs.Title)
+			}
+		} else {
+			sb.WriteString("🗂️ Chats recientes (AGY):")
+			for _, c := range chats.ListAgyConversations(s.cfg, 6) {
+				sb.WriteString("\n• " + c.Title)
+			}
+		}
+		reply(sb.String())
+		return true
+
+	case "/tokens", "/usage":
+		go func() {
+			q := tokens.FetchAll(s.cfg)
+			_ = tokens.WriteWaybarJSON(s.cfg)
+			reply(tokens.FormatTelegramDashboard(q))
+		}()
+		return true
+	}
+
+	return false
 }
 
 func FormatConnectionInfo(cfg *config.Config) string {

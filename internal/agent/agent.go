@@ -133,6 +133,15 @@ func (s *Service) broadcast(ev Event, perReq func(Event)) {
 	}
 }
 
+// EmitExternalNotification envía una notificación (ej. desde hooks de terminal AGY/Claude) a los clientes suscritos.
+func (s *Service) EmitExternalNotification(text string) {
+	s.broadcast(Event{
+		Type: EventTypeChunk,
+		Text: text,
+		Done: true,
+	}, nil)
+}
+
 func (s *Service) setState(next State, perReq func(Event)) {
 	s.stateMu.Lock()
 	changed := s.currentState != next
