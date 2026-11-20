@@ -9,7 +9,7 @@ import '../models/agent_event.dart';
 
 enum AvatarStyle { cubeBot, orbCore, visorMech, ghostCat }
 
-enum AvatarAccessory { none, hair, antenna, crown }
+enum AvatarAccessory { none, hair, curlyHair, antenna, crown }
 
 class RiveCompanionAvatar extends StatefulWidget {
   final CharacterState state;
@@ -253,6 +253,22 @@ class _ProceduralCharacterPainter extends CustomPainter {
         ..quadraticBezierTo(headCenter.dx - 4, topEdge - 10, headCenter.dx + 2, topEdge - 3)
         ..quadraticBezierTo(headCenter.dx + 8, topEdge - 11, headCenter.dx + 12, topEdge);
       canvas.drawPath(hair, accPaint);
+    } else if (accessory == AvatarAccessory.curlyHair) {
+      final curlPaint = Paint()
+        ..color = accentColor
+        ..style = PaintingStyle.fill;
+      final leftX = headCenter.dx - radius * 1.05;
+      final rightX = headCenter.dx + radius * 1.05;
+      for (int i = 0; i < 5; i++) {
+        final cx = headCenter.dx - radius * 0.72 + i * (radius * 0.36);
+        canvas.drawCircle(Offset(cx, topEdge - 2), radius * 0.24, curlPaint);
+      }
+      for (int i = 0; i < 4; i++) {
+        final cy = topEdge + radius * 0.22 + i * (radius * 0.42);
+        final wobble = i.isEven ? -2.0 : 2.0;
+        canvas.drawCircle(Offset(leftX + wobble, cy), radius * 0.22, curlPaint);
+        canvas.drawCircle(Offset(rightX - wobble, cy), radius * 0.22, curlPaint);
+      }
     } else if (accessory == AvatarAccessory.antenna) {
       canvas.drawLine(Offset(headCenter.dx, topEdge), Offset(headCenter.dx, topEdge - 9), accPaint);
       canvas.drawCircle(Offset(headCenter.dx, topEdge - 11), 3.0, Paint()..color = accentColor);

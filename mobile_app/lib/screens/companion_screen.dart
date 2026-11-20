@@ -22,7 +22,7 @@ class CompanionScreen extends StatefulWidget {
   State<CompanionScreen> createState() => _CompanionScreenState();
 }
 
-class _CompanionScreenState extends State<CompanionScreen> {
+class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingObserver {
   final TextEditingController _inputController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   int _lastMsgCount = 0;
@@ -47,9 +47,15 @@ class _CompanionScreenState extends State<CompanionScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     widget.client.addListener(_onClientUpdated);
     _inputController.addListener(_onTextChanged);
     _loadAvatarPrefs();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    widget.client.isAppInForeground = state == AppLifecycleState.resumed;
   }
 
   Future<File> _prefsFile() async {
