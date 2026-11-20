@@ -266,35 +266,38 @@ class _CompanionScreenState extends State<CompanionScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            // Header minimalista fijo: [=]  [Avatar + Nombre]  [🔔] [⚙️]
+            // Header minimalista fijo centrado con Stack: [=]  [Cuadrito + Nombre]  [🔔] [⚙️]
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              child: Stack(
+                alignment: Alignment.topCenter,
                 children: [
-                  Builder(
-                    builder: (btnCtx) => IconButton(
-                      tooltip: 'Menú de comandos',
-                      onPressed: () => Scaffold.of(btnCtx).openDrawer(),
-                      style: IconButton.styleFrom(
-                        backgroundColor: const Color(0xFF1A1D21),
+                  Align(
+                    alignment: Alignment.topLeft,
+                    child: Builder(
+                      builder: (btnCtx) => IconButton(
+                        tooltip: 'Menú de comandos',
+                        onPressed: () => Scaffold.of(btnCtx).openDrawer(),
+                        style: IconButton.styleFrom(
+                          backgroundColor: const Color(0xFF1A1D21),
+                        ),
+                        icon: const Icon(Icons.drag_handle, color: Color(0xFFE6EDF3), size: 20),
                       ),
-                      icon: const Icon(Icons.drag_handle, color: Color(0xFFE6EDF3), size: 20),
                     ),
                   ),
-                  const Spacer(),
                   GestureDetector(
                     onTap: () => _onAvatarTap(state),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Container(
-                          width: 64,
-                          height: 64,
+                          width: 68,
+                          height: 68,
                           padding: const EdgeInsets.all(6),
-                          decoration: const BoxDecoration(
-                            color: Color(0xFF15181C),
-                            shape: BoxShape.circle,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF15181C),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: const Color(0xFF21262D)),
                           ),
                           child: RiveCompanionAvatar(state: state),
                         ),
@@ -317,25 +320,27 @@ class _CompanionScreenState extends State<CompanionScreen> {
                       ],
                     ),
                   ),
-                  const Spacer(),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      IconButton(
-                        tooltip: 'Buzón de notificaciones',
-                        onPressed: _openNotificationsInbox,
-                        icon: Badge(
-                          isLabelVisible: widget.client.unreadNotifications > 0,
-                          label: Text('${widget.client.unreadNotifications}'),
-                          child: const Icon(Icons.notifications_none, color: Color(0xFF8B949E), size: 20),
+                  Align(
+                    alignment: Alignment.topRight,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          tooltip: 'Buzón de notificaciones',
+                          onPressed: _openNotificationsInbox,
+                          icon: Badge(
+                            isLabelVisible: widget.client.unreadNotifications > 0,
+                            label: Text('${widget.client.unreadNotifications}'),
+                            child: const Icon(Icons.notifications_none, color: Color(0xFF8B949E), size: 20),
+                          ),
                         ),
-                      ),
-                      IconButton(
-                        tooltip: 'Configurar nodo Tailscale',
-                        onPressed: _openConnectionSheet,
-                        icon: const Icon(Icons.tune, color: Color(0xFF8B949E), size: 20),
-                      ),
-                    ],
+                        IconButton(
+                          tooltip: 'Configurar nodo Tailscale',
+                          onPressed: _openConnectionSheet,
+                          icon: const Icon(Icons.tune, color: Color(0xFF8B949E), size: 20),
+                        ),
+                      ],
+                    ),
                   ),
                 ],
               ),
