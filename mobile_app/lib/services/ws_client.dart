@@ -10,7 +10,7 @@ import 'package:path_provider/path_provider.dart';
 import '../models/agent_event.dart';
 import 'notifications.dart';
 
-const int currentAppBuildNumber = 16;
+const int currentAppBuildNumber = 17;
 
 /// Cliente WebSocket resiliente con reconexión exponencial y sincronización
 /// directa con la State Machine de Rive (`idle`, `listening`, `thinking`, `speaking`, `sleeping`).

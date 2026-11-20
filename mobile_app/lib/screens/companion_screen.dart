@@ -340,6 +340,10 @@ class _CompanionScreenState extends State<CompanionScreen> {
                             ),
                           ),
                         ),
+                        if (state != CharacterState.idle) ...[
+                          const SizedBox(height: 5),
+                          _buildStatusBubble(state),
+                        ],
                       ],
                     ),
                   ),
@@ -860,6 +864,59 @@ class _CompanionScreenState extends State<CompanionScreen> {
       ),
     );
   }
+  Widget _buildStatusBubble(CharacterState state) {
+    String label;
+    Color dotColor;
+    final lastMsg = widget.client.messages.isNotEmpty ? widget.client.messages.last : null;
+    final liveTool = (lastMsg != null && !lastMsg.isUser) ? lastMsg.toolStatus.trim() : '';
+
+    switch (state) {
+      case CharacterState.thinking:
+        label = liveTool.isNotEmpty ? liveTool : 'Pensando...';
+        dotColor = const Color(0xFFD29922);
+      case CharacterState.speaking:
+        label = 'Respondiendo...';
+        dotColor = const Color(0xFF3FB950);
+      case CharacterState.listening:
+        label = 'Escribiendo...';
+        dotColor = const Color(0xFF58A6FF);
+      case CharacterState.sleeping:
+        label = 'PC offline';
+        dotColor = const Color(0xFF6E7681);
+      case CharacterState.idle:
+        return const SizedBox.shrink();
+    }
+
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 220),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: const Color(0xFF15181C),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: dotColor.withValues(alpha: 0.45)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 7,
+            height: 7,
+            decoration: BoxDecoration(color: dotColor, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Color(0xFFE6EDF3), fontSize: 11),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _openAvatarCustomizer() {
     const colors = [
       Color(0xFF3FB950),
