@@ -64,6 +64,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/notify", s.handleNotify)
 	mux.HandleFunc("/upload", s.handleUpload)
 	mux.HandleFunc("/scan", s.handleScan)
+	mux.HandleFunc("/version", s.handleVersion)
+	mux.HandleFunc("/apk", s.handleAPK)
 	return mux
 }
 
@@ -305,6 +307,54 @@ func (s *Server) scanPCEnvironment() map[string]any {
 		"tailscale_ip":  config.DetectTailscaleIPv4(),
 		"telegram_on":   s.cfg.EnableTelegram,
 	}
+}
+
+func (s *Server) apkFilePath() string {
+	return filepath.Join("/mnt/datos/Projects/telegram-paulobot/mobile_app/build/app/outputs/flutter-apk/app-release.apk")
+}
+
+func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
+	if !s.isAuthorized(r) {
+		http.Error(w, "no autorizado", http.StatusUnauthorized)
+		return
+	}
+	verStr := "1.0.0+1"
+	buildNum := 1
+	if raw, err := os.ReadFile("/mnt/datos/Projects/telegram-paulobot/mobile_app/pubspec.yaml"); err == nil {
+		for _, line := range strings.Split(string(raw), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "version:") {
+				verStr = strings.TrimSpace(strings.TrimPrefix(line, "version:"))
+				if parts := strings.Split(verStr, "+"); len(parts) == 2 {
+					fmt.Sscanf(parts[1], "%d", &buildNum)
+				}
+				break
+			}
+		}
+	}
+	_, err := os.Stat(s.apkFilePath())
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ok":         true,
+		"version":    verStr,
+		"build":      buildNum,
+		"apk_exists": err == nil,
+	})
+}
+
+func (s *Server) handleAPK(w http.ResponseWriter, r *http.Request) {
+	if !s.isAuthorized(r) {
+		http.Error(w, "no autorizado", http.StatusUnauthorized)
+		return
+	}
+	apkPath := s.apkFilePath()
+	if _, err := os.Stat(apkPath); err != nil {
+		http.Error(w, "APK no compilado aún (ejecuta flutter build apk --release)", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/vnd.android.package-archive")
+	w.Header().Set("Content-Disposition", `attachment; filename="paulobot-mobile.apk"`)
+	http.ServeFile(w, r, apkPath)
 }
 
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {

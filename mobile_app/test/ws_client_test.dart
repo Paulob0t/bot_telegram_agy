@@ -19,6 +19,12 @@ void main() {
         await req.response.close();
         return;
       }
+      if (req.uri.path == '/version') {
+        req.response.statusCode = HttpStatus.ok;
+        req.response.write(jsonEncode({'ok': true, 'build': 1, 'apk_exists': false}));
+        await req.response.close();
+        return;
+      }
       final ws = await WebSocketTransformer.upgrade(req);
       serverClients.add(ws);
 

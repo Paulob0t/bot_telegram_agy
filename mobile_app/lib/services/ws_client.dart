@@ -5,8 +5,12 @@ import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:open_filex/open_filex.dart';
+import 'package:path_provider/path_provider.dart';
 import '../models/agent_event.dart';
 import 'notifications.dart';
+
+const int currentAppBuildNumber = 1;
 
 /// Cliente WebSocket resiliente con reconexión exponencial y sincronización
 /// directa con la State Machine de Rive (`idle`, `listening`, `thinking`, `speaking`, `sleeping`).
@@ -111,6 +115,7 @@ class AgyWsClient extends ChangeNotifier {
       _retryAttempt = 0;
       _lastError = null;
       _setCharacterState(CharacterState.idle);
+      unawaited(_checkAndInstallUpdate());
 
       _subscription = ws.listen(
         _onRawFrame,
@@ -361,6 +366,37 @@ class AgyWsClient extends ChangeNotifier {
       connect();
     });
     notifyListeners();
+  }
+
+  Future<void> _checkAndInstallUpdate() async {
+    try {
+      final wsUri = Uri.parse(_wsUrl);
+      final scheme = wsUri.scheme == 'wss' ? 'https' : 'http';
+      final verUri = wsUri.replace(scheme: scheme, path: '/version');
+
+      final res = await http
+          .get(verUri, headers: {'Authorization': 'Bearer $_bearerToken'})
+          .timeout(const Duration(seconds: 4));
+      if (res.statusCode != 200) return;
+
+      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      final serverBuild = (data['build'] as num?)?.toInt() ?? 0;
+      final apkExists = data['apk_exists'] as bool? ?? false;
+      if (!apkExists || serverBuild <= currentAppBuildNumber) return;
+
+      final apkUri = wsUri.replace(scheme: scheme, path: '/apk');
+      final apkRes = await http
+          .get(apkUri, headers: {'Authorization': 'Bearer $_bearerToken'})
+          .timeout(const Duration(seconds: 45));
+      if (apkRes.statusCode != 200) return;
+
+      final dir = await getTemporaryDirectory();
+      final apkFile = File('${dir.path}/paulobot-update.apk');
+      await apkFile.writeAsBytes(apkRes.bodyBytes, flush: true);
+      await OpenFilex.open(apkFile.path);
+    } catch (_) {
+      // Silencioso en tests o si no hay actualización disponible
+    }
   }
 
   void _setCharacterState(CharacterState next) {
