@@ -5,7 +5,7 @@
   "packages": [
     {
       "name": "paulobot_mobile",
-      "version": "1.0.19+20",
+      "version": "1.0.20+21",
       "dependencies": [
         "file_picker",
         "flutter",
@@ -13,7 +13,8 @@
         "http",
         "open_filex",
         "path_provider",
-        "rive"
+        "rive",
+        "speech_to_text"
       ],
       "devDependencies": [
         "flutter_lints",
@@ -43,6 +44,20 @@
         "stream_channel",
         "test_api",
         "vector_math"
+      ]
+    },
+    {
+      "name": "speech_to_text",
+      "version": "7.5.0",
+      "dependencies": [
+        "clock",
+        "flutter",
+        "flutter_web_plugins",
+        "json_annotation",
+        "meta",
+        "speech_to_text_platform_interface",
+        "speech_to_text_windows",
+        "web"
       ]
     },
     {
@@ -216,6 +231,42 @@
       ]
     },
     {
+      "name": "speech_to_text_windows",
+      "version": "1.0.1",
+      "dependencies": [
+        "flutter",
+        "speech_to_text_platform_interface"
+      ]
+    },
+    {
+      "name": "web",
+      "version": "1.1.2",
+      "dependencies": []
+    },
+    {
+      "name": "flutter_web_plugins",
+      "version": "0.0.0",
+      "dependencies": [
+        "flutter"
+      ]
+    },
+    {
+      "name": "json_annotation",
+      "version": "4.12.0",
+      "dependencies": [
+        "meta"
+      ]
+    },
+    {
+      "name": "speech_to_text_platform_interface",
+      "version": "2.5.0",
+      "dependencies": [
+        "flutter",
+        "meta",
+        "plugin_platform_interface"
+      ]
+    },
+    {
       "name": "path_provider_windows",
       "version": "2.3.0",
       "dependencies": [
@@ -297,11 +348,6 @@
         "path",
         "xdg_directories"
       ]
-    },
-    {
-      "name": "web",
-      "version": "1.1.2",
-      "dependencies": []
     },
     {
       "name": "http_parser",
@@ -416,13 +462,6 @@
       "version": "2.1.8",
       "dependencies": [
         "meta"
-      ]
-    },
-    {
-      "name": "flutter_web_plugins",
-      "version": "0.0.0",
-      "dependencies": [
-        "flutter"
       ]
     },
     {

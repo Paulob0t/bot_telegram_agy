@@ -5,6 +5,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 import '../models/agent_event.dart';
 import '../services/ws_client.dart';
@@ -25,6 +26,8 @@ class CompanionScreen extends StatefulWidget {
 class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingObserver {
   final TextEditingController _inputController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  final stt.SpeechToText _speech = stt.SpeechToText();
+  bool _isListeningVoice = false;
   int _lastMsgCount = 0;
   String _assistantName = 'HyprAgent';
   AvatarStyle _avatarStyle = AvatarStyle.cubeBot;
@@ -507,6 +510,33 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
                 ),
               ),
 
+            if (_slashQuery.isEmpty && widget.client.isConnected)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                color: const Color(0xFF0B0C0E),
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      for (final quick in const ['Sí', 'Dale', 'Cancela', '/status'])
+                        Padding(
+                          padding: const EdgeInsets.only(right: 6),
+                          child: ActionChip(
+                            backgroundColor: const Color(0xFF15181C),
+                            side: const BorderSide(color: Color(0xFF21262D)),
+                            label: Text(
+                              quick,
+                              style: const TextStyle(color: Color(0xFF8B949E), fontSize: 11),
+                            ),
+                            onPressed: () => widget.client.sendPrompt(quick),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+
             // Barra de entrada
             Container(
               padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
@@ -522,6 +552,15 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
                     tooltip: 'Adjuntar foto o PDF',
                     onPressed: widget.client.isConnected ? _pickAndUploadFile : null,
                     icon: const Icon(Icons.attach_file, color: Color(0xFF8B949E), size: 20),
+                  ),
+                  IconButton(
+                    tooltip: _isListeningVoice ? 'Detener voz' : 'Dictar por voz',
+                    onPressed: widget.client.isConnected ? _toggleVoiceInput : null,
+                    icon: Icon(
+                      _isListeningVoice ? Icons.mic : Icons.mic_none,
+                      color: _isListeningVoice ? const Color(0xFFF85149) : const Color(0xFF8B949E),
+                      size: 20,
+                    ),
                   ),
                   Expanded(
                     child: TextField(
@@ -921,6 +960,30 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
       ),
     );
   }
+  Future<void> _toggleVoiceInput() async {
+    if (_isListeningVoice) {
+      await _speech.stop();
+      if (mounted) setState(() => _isListeningVoice = false);
+      return;
+    }
+    final available = await _speech.initialize();
+    if (!available) return;
+    if (mounted) setState(() => _isListeningVoice = true);
+    await _speech.listen(
+      localeId: 'es_MX',
+      onResult: (res) {
+        if (!mounted) return;
+        _inputController.text = res.recognizedWords;
+        _inputController.selection = TextSelection.fromPosition(
+          TextPosition(offset: _inputController.text.length),
+        );
+        if (res.finalResult) {
+          setState(() => _isListeningVoice = false);
+        }
+      },
+    );
+  }
+
   Widget _buildStatusBubble(CharacterState state) {
     String label;
     Color dotColor;
