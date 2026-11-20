@@ -10,7 +10,7 @@ import 'package:path_provider/path_provider.dart';
 import '../models/agent_event.dart';
 import 'notifications.dart';
 
-const int currentAppBuildNumber = 22;
+const int currentAppBuildNumber = 23;
 
 /// Cliente WebSocket resiliente con reconexión exponencial y sincronización
 /// directa con la State Machine de Rive (`idle`, `listening`, `thinking`, `speaking`, `sleeping`).
@@ -181,6 +181,7 @@ class AgyWsClient extends ChangeNotifier {
 
     if (text == '/new' || text.startsWith('/resume ')) {
       _messages.clear();
+      unawaited(_saveLocalHistory());
     }
 
     final now = DateTime.now();
@@ -536,7 +537,7 @@ class AgyWsClient extends ChangeNotifier {
 
       final apkRes = await http
           .get(apkUri, headers: {'Authorization': 'Bearer $_bearerToken'})
-          .timeout(const Duration(seconds: 90));
+          .timeout(const Duration(minutes: 5));
       if (apkRes.statusCode != 200) {
         throw Exception('HTTP ${apkRes.statusCode}');
       }

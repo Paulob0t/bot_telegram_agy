@@ -565,6 +565,9 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
                   Expanded(
                     child: TextField(
                       controller: _inputController,
+                      minLines: 1,
+                      maxLines: 5,
+                      keyboardType: TextInputType.multiline,
                       onSubmitted: (_) => _handleSend(),
                       style: const TextStyle(
                         color: Color(0xFFE6EDF3),
@@ -861,13 +864,23 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
           children: [
             const Padding(
               padding: EdgeInsets.fromLTRB(20, 20, 20, 12),
-              child: Text(
-                'Comandos rápidos',
-                style: TextStyle(
-                  color: Color(0xFFE6EDF3),
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Comandos rápidos',
+                    style: TextStyle(
+                      color: Color(0xFFE6EDF3),
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  SizedBox(height: 2),
+                  Text(
+                    'Build $currentAppBuildNumber',
+                    style: TextStyle(color: Color(0xFF6E7681), fontSize: 11),
+                  ),
+                ],
               ),
             ),
             const Divider(color: Color(0xFF21262D), height: 1),
