@@ -19,8 +19,16 @@ void main() {
     expect(find.textContaining('HyprAgent'), findsOneWidget);
     expect(client.characterState, CharacterState.sleeping);
 
-    // Abrir hoja de configuración de Tailscale
-    await tester.tap(find.byIcon(Icons.tune));
+    // Abrir menú hamburguesa y entrar a Ajustes
+    await tester.tap(find.byIcon(Icons.drag_handle));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.scrollUntilVisible(
+      find.text('Ajustes y conexión'),
+      200,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await tester.tap(find.text('Ajustes y conexión'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 350));
 

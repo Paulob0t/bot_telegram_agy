@@ -322,24 +322,17 @@ class _CompanionScreenState extends State<CompanionScreen> {
                   ),
                   Align(
                     alignment: Alignment.topRight,
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        IconButton(
-                          tooltip: 'Buzón de notificaciones',
-                          onPressed: _openNotificationsInbox,
-                          icon: Badge(
-                            isLabelVisible: widget.client.unreadNotifications > 0,
-                            label: Text('${widget.client.unreadNotifications}'),
-                            child: const Icon(Icons.notifications_none, color: Color(0xFF8B949E), size: 20),
-                          ),
-                        ),
-                        IconButton(
-                          tooltip: 'Configurar nodo Tailscale',
-                          onPressed: _openConnectionSheet,
-                          icon: const Icon(Icons.tune, color: Color(0xFF8B949E), size: 20),
-                        ),
-                      ],
+                    child: IconButton(
+                      tooltip: 'Buzón de notificaciones',
+                      onPressed: _openNotificationsInbox,
+                      style: IconButton.styleFrom(
+                        backgroundColor: const Color(0xFF1A1D21),
+                      ),
+                      icon: Badge(
+                        isLabelVisible: widget.client.unreadNotifications > 0,
+                        label: Text('${widget.client.unreadNotifications}'),
+                        child: const Icon(Icons.notifications_none, color: Color(0xFFE6EDF3), size: 20),
+                      ),
                     ),
                   ),
                 ],
@@ -741,6 +734,22 @@ class _CompanionScreenState extends State<CompanionScreen> {
                         }
                       },
                     ),
+                  const Divider(color: Color(0xFF21262D), height: 16),
+                  ListTile(
+                    leading: const Icon(Icons.tune, color: Color(0xFF8B949E), size: 20),
+                    title: const Text(
+                      'Ajustes y conexión',
+                      style: TextStyle(color: Color(0xFFE6EDF3), fontSize: 14),
+                    ),
+                    subtitle: const Text(
+                      'Nombre, URL Tailscale y Token',
+                      style: TextStyle(color: Color(0xFF6E7681), fontSize: 12),
+                    ),
+                    onTap: () {
+                      Navigator.of(context).pop();
+                      _openConnectionSheet();
+                    },
+                  ),
                   if (widget.client.updateAvailable) ...[
                     const Divider(color: Color(0xFF21262D), height: 16),
                     ListTile(
