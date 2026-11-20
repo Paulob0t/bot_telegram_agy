@@ -12,6 +12,7 @@ import (
 	"telegram-paulobot/internal/projects"
 	"telegram-paulobot/internal/telegram"
 	"telegram-paulobot/internal/tokens"
+	"telegram-paulobot/internal/transport/mobile"
 	"telegram-paulobot/internal/utils"
 )
 
@@ -146,6 +147,9 @@ func (a *App) handleCommand(chatID int64, text string) {
 	case "/resume", "/chats", "/historial":
 		msg, kb := a.buildResumeKeyboard("chat:", "res_page:", 0)
 		_, _ = a.TG.SendMessage(chatID, msg, kb)
+
+	case "/mobile", "/ws", "/tailscale":
+		_, _ = a.TG.SendMessage(chatID, mobile.FormatConnectionInfo(a.Cfg), nil)
 
 	case "/stop", "/cancel", "/cancelar":
 		a.cancelActiveExecution(chatID, false)

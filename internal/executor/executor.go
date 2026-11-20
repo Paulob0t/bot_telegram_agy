@@ -16,10 +16,52 @@ import (
 	"telegram-paulobot/internal/state"
 )
 
-// RunPrompt ejecuta agy o claude con --output-format stream-json y --dangerously-skip-permissions,
-// mata el árbol de procesos completo (PGID) al cancelar y fija el chat/cwd tras ejecutar.
+type StreamCallbacks struct {
+	OnState func(state string)
+	OnChunk func(text, toolStatus string, done bool)
+}
+
+// RunPrompt mantiene compatibilidad hacia atrás con callbacks simples de texto parcial.
 func RunPrompt(ctx context.Context, cfg *config.Config, st *state.BotSessionState, prompt string, onChunk func(partial string)) (string, error) {
-	fullPrompt := prompt + "\n\n[Telegram: responde ultracave, máx 4 líneas cortas salvo que pida detalle]"
+	return RunPromptWithEvents(ctx, cfg, st, prompt, StreamCallbacks{
+		OnChunk: func(text, toolStatus string, done bool) {
+			if onChunk == nil || done {
+				return
+			}
+			rendered := text
+			if toolStatus != "" {
+				if rendered != "" {
+					rendered += "\n\n" + toolStatus
+				} else {
+					rendered = toolStatus
+				}
+			}
+			if rendered != "" {
+				onChunk(rendered + "\n\n◷ ▍")
+			}
+		},
+	})
+}
+
+// RunPromptWithEvents ejecuta agy o claude con --output-format stream-json y --dangerously-skip-permissions,
+// emitiendo transiciones de estado ("thinking", "speaking", "idle") y fragmentos para Telegram y WebSocket móvil.
+func RunPromptWithEvents(ctx context.Context, cfg *config.Config, st *state.BotSessionState, prompt string, cb StreamCallbacks) (string, error) {
+	currentState := ""
+	emitState := func(next string) {
+		if next == "" || next == currentState {
+			return
+		}
+		currentState = next
+		if cb.OnState != nil {
+			cb.OnState(next)
+		}
+	}
+	defer emitState("idle")
+
+	fullPrompt := prompt
+	if !strings.Contains(fullPrompt, "[Telegram:") && !strings.Contains(fullPrompt, "[Mobile:") {
+		fullPrompt += "\n\n[Telegram: responde ultracave, máx 4 líneas cortas salvo que pida detalle]"
+	}
 
 	var bin string
 	var args []string
@@ -79,7 +121,6 @@ func RunPrompt(ctx context.Context, cfg *config.Config, st *state.BotSessionStat
 		envExtra = []string{"AGY_FROM_TELEGRAM=1", "CLAUDE_FROM_TELEGRAM=1"}
 	}
 
-	// Si estaba en NEW, el siguiente mensaje continuará el hilo recién creado
 	if isClaude && st.ClaudeSessionID == "NEW" {
 		st.ClaudeSessionID = ""
 		st.ClaudeSessionTitle = "▸ Último chat Claude (-c)"
@@ -109,6 +150,7 @@ func RunPrompt(ctx context.Context, cfg *config.Config, st *state.BotSessionStat
 	if err := cmd.Start(); err != nil {
 		return "", fmt.Errorf("error iniciando %s: %w", bin, err)
 	}
+	emitState("thinking")
 
 	doneCh := make(chan struct{})
 	go func() {
@@ -127,22 +169,14 @@ func RunPrompt(ctx context.Context, cfg *config.Config, st *state.BotSessionStat
 
 	lastEmit := time.Now()
 	emitIfNeeded := func() {
-		if onChunk == nil || time.Since(lastEmit) < 1200*time.Millisecond {
+		if cb.OnChunk == nil || time.Since(lastEmit) < 800*time.Millisecond {
 			return
 		}
 		body := strings.TrimSpace(accumulated.String())
 		if body == "" && toolStatus == "" {
 			return
 		}
-		rendered := body
-		if toolStatus != "" {
-			if rendered != "" {
-				rendered += "\n\n" + toolStatus
-			} else {
-				rendered = toolStatus
-			}
-		}
-		onChunk(rendered + "\n\n◷ ▍")
+		cb.OnChunk(body, toolStatus, false)
 		lastEmit = time.Now()
 	}
 
@@ -154,6 +188,7 @@ func RunPrompt(ctx context.Context, cfg *config.Config, st *state.BotSessionStat
 		if !strings.HasPrefix(line, "{") {
 			accumulated.WriteString(line)
 			accumulated.WriteByte('\n')
+			emitState("speaking")
 			emitIfNeeded()
 			continue
 		}
@@ -162,6 +197,7 @@ func RunPrompt(ctx context.Context, cfg *config.Config, st *state.BotSessionStat
 		if err := json.Unmarshal([]byte(line), &ev); err != nil {
 			accumulated.WriteString(line)
 			accumulated.WriteByte('\n')
+			emitState("speaking")
 			emitIfNeeded()
 			continue
 		}
@@ -177,11 +213,14 @@ func RunPrompt(ctx context.Context, cfg *config.Config, st *state.BotSessionStat
 				if delta, ok := step["text_delta"].(string); ok && delta != "" {
 					accumulated.WriteString(delta)
 					toolStatus = ""
+					emitState("speaking")
 				}
 				if ts := extractStepToolStatus(step); ts != "" {
 					toolStatus = ts
+					emitState("thinking")
 				} else if (step["thinking_delta"] != nil || step["thinking"] != nil) && accumulated.Len() == 0 {
 					toolStatus = "◈ _Razonando…_"
+					emitState("thinking")
 				}
 			}
 		case "assistant":
@@ -202,6 +241,7 @@ func RunPrompt(ctx context.Context, cfg *config.Config, st *state.BotSessionStat
 							tname, _ := blk["name"].(string)
 							if tname != "" {
 								toolStatus = fmt.Sprintf("⚙ _Ejecutando `%s`…_", tname)
+								emitState("thinking")
 							}
 						}
 					}
@@ -209,6 +249,7 @@ func RunPrompt(ctx context.Context, cfg *config.Config, st *state.BotSessionStat
 						accumulated.Reset()
 						accumulated.WriteString(strings.Join(parts, "\n"))
 						toolStatus = ""
+						emitState("speaking")
 					}
 				}
 			}
@@ -218,11 +259,13 @@ func RunPrompt(ctx context.Context, cfg *config.Config, st *state.BotSessionStat
 				if finalResp, ok := res["response"].(string); ok && strings.TrimSpace(finalResp) != "" {
 					accumulated.Reset()
 					accumulated.WriteString(finalResp)
+					emitState("speaking")
 				}
 			case string:
 				if strings.TrimSpace(res) != "" {
 					accumulated.Reset()
 					accumulated.WriteString(strings.TrimSpace(res))
+					emitState("speaking")
 				}
 			}
 			if sid, ok := ev["session_id"].(string); ok && sid != "" && isClaude && st.ClaudeSessionID == "" {
@@ -253,7 +296,6 @@ func RunPrompt(ctx context.Context, cfg *config.Config, st *state.BotSessionStat
 	}
 	waitErr = <-waitCh
 
-	// Fijar conversación AGY y asociarla a su proyecto (cwd)
 	if !isClaude {
 		if usedConvID == "" || usedConvID == "NEW" || usedConvID == "LATEST" {
 			latest := chats.ListAgyConversations(cfg, 1)
@@ -265,7 +307,11 @@ func RunPrompt(ctx context.Context, cfg *config.Config, st *state.BotSessionStat
 		}
 	}
 
-	return strings.TrimSpace(accumulated.String()), waitErr
+	finalOut := strings.TrimSpace(accumulated.String())
+	if cb.OnChunk != nil {
+		cb.OnChunk(finalOut, "", true)
+	}
+	return finalOut, waitErr
 }
 
 func extractStepToolStatus(step map[string]any) string {

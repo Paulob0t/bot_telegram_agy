@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"telegram-paulobot/internal/executor"
+	"telegram-paulobot/internal/agent"
 	"telegram-paulobot/internal/telegram"
 	"telegram-paulobot/internal/utils"
 )
@@ -119,12 +119,24 @@ func (a *App) executeJob(job queuedJob) {
 	a.runMu.Unlock()
 	defer cancel()
 
-	out, err := executor.RunPrompt(ctx, a.Cfg, a.State, job.prompt, func(partial string) {
-		if ctx.Err() != nil {
+	out, err := a.Agent.Execute(ctx, agent.Request{
+		UserID: fmt.Sprintf("%d", job.chatID),
+		Text:   job.prompt,
+		Source: "telegram",
+	}, func(ev agent.Event) {
+		if ctx.Err() != nil || ev.Type != agent.EventTypeChunk || ev.Done || msgID == 0 {
 			return
 		}
-		if msgID != 0 {
-			a.TG.EditMessage(job.chatID, msgID, utils.SanitizeStreamingMarkdown(partial, 3750), cancelKB)
+		rendered := ev.Text
+		if ev.ToolStatus != "" {
+			if rendered != "" {
+				rendered += "\n\n" + ev.ToolStatus
+			} else {
+				rendered = ev.ToolStatus
+			}
+		}
+		if rendered != "" {
+			a.TG.EditMessage(job.chatID, msgID, utils.SanitizeStreamingMarkdown(rendered+"\n\n◷ ▍", 3750), cancelKB)
 		}
 	})
 
@@ -185,8 +197,11 @@ func (a *App) cancelActiveExecution(chatID int64, clearAll bool) {
 	cancelFn := a.runCancel
 	a.runMu.Unlock()
 
-	if cancelFn != nil {
-		cancelFn()
+	agentCancelled := a.Agent.CancelActive()
+	if cancelFn != nil || agentCancelled {
+		if cancelFn != nil {
+			cancelFn()
+		}
 		if clearAll {
 			_, _ = a.TG.SendMessage(chatID, fmt.Sprintf("🛑 Ejecución cancelada y `%d` mensajes en cola descartados.", cleared), nil)
 		} else {
@@ -214,8 +229,11 @@ func (a *App) forceJobNow(jobID string) {
 	cancelFn := a.runCancel
 	a.runMu.Unlock()
 
-	if cancelFn != nil {
-		cancelFn()
+	agentCancelled := a.Agent.CancelActive()
+	if cancelFn != nil || agentCancelled {
+		if cancelFn != nil {
+			cancelFn()
+		}
 	}
 }
 

@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "◆ Configurando Tailscale + Demonio systemd para Paulobot (AGY + Flutter WS)..."
+
+if ! command -v tailscale >/dev/null 2>&1; then
+    echo "▸ Instalando paquete tailscale en Arch Linux..."
+    sudo pacman -S --needed --noconfirm tailscale
+fi
+
+if ! systemctl is-active --quiet tailscaled.service; then
+    echo "▸ Habilitando y arrancando tailscaled.service..."
+    sudo systemctl enable --now tailscaled.service
+fi
+
+TS_IP="$(tailscale ip -4 2>/dev/null | head -n 1 || true)"
+if [[ -z "$TS_IP" ]]; then
+    echo "▸ Autenticando nodo en Tailscale (abre el link si se solicita)..."
+    sudo tailscale up
+    TS_IP="$(tailscale ip -4 2>/dev/null | head -n 1 || true)"
+fi
+
+loginctl enable-linger "$USER" >/dev/null 2>&1 || true
+systemctl --user daemon-reload
+systemctl --user enable --now telegram-bot.service
+systemctl --user restart telegram-bot.service
+
+echo ""
+echo "✓ Servicio activo. Datos para la App Flutter:"
+/mnt/datos/Projects/telegram-paulobot/telegram-bot mobile-info

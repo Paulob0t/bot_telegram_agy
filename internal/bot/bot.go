@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"telegram-paulobot/internal/agent"
 	"telegram-paulobot/internal/buffer"
 	"telegram-paulobot/internal/config"
 	"telegram-paulobot/internal/guard"
@@ -20,6 +21,7 @@ import (
 type App struct {
 	Cfg       *config.Config
 	State     *state.BotSessionState
+	Agent     *agent.Service
 	TG        *telegram.Client
 	Guard     *guard.ChatGuard
 	Buffer    *buffer.MessageBuffer
@@ -31,10 +33,17 @@ type App struct {
 	jobQueue  []queuedJob
 }
 
-func New(cfg *config.Config, st *state.BotSessionState) *App {
+func New(cfg *config.Config, st *state.BotSessionState, ag ...*agent.Service) *App {
+	var svc *agent.Service
+	if len(ag) > 0 && ag[0] != nil {
+		svc = ag[0]
+	} else {
+		svc = agent.New(cfg, st)
+	}
 	app := &App{
 		Cfg:       cfg,
 		State:     st,
+		Agent:     svc,
 		TG:        telegram.New(cfg.Token),
 		Guard:     guard.New(cfg.ChatIdleMinutes),
 		StartTime: time.Now(),

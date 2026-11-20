@@ -10,11 +10,13 @@ import (
 	"syscall"
 	"time"
 
+	"telegram-paulobot/internal/agent"
 	"telegram-paulobot/internal/bot"
 	"telegram-paulobot/internal/config"
 	"telegram-paulobot/internal/hooks"
 	"telegram-paulobot/internal/state"
 	"telegram-paulobot/internal/tokens"
+	"telegram-paulobot/internal/transport/mobile"
 )
 
 func main() {
@@ -53,11 +55,17 @@ func main() {
 			return
 		case "notify", "notify-telegram":
 			os.Exit(hooks.RunNotifyCLI(cfg, st, os.Args[2:]))
+		case "mobile-info":
+			fmt.Println(mobile.FormatConnectionInfo(cfg))
+			return
 		}
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	bot.New(cfg, st).Run(ctx)
+	ag := agent.New(cfg, st)
+	go mobile.NewServer(cfg, ag).Run(ctx)
+
+	bot.New(cfg, st, ag).Run(ctx)
 }

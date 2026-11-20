@@ -3,6 +3,7 @@ package config
 import (
 	"bufio"
 	"errors"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +15,8 @@ import (
 type Config struct {
 	Token                   string
 	AuthorizedUserID        int64
+	MobileWSAddr            string
+	MobileWSToken           string
 	HomeDir                 string
 	ProjectsBaseDir         string
 	ObsidianVaultDir        string
@@ -55,6 +58,8 @@ func Load(projectRoot string) (*Config, error) {
 	return &Config{
 		Token:                  token,
 		AuthorizedUserID:       authID,
+		MobileWSAddr:           envOr("MOBILE_WS_ADDR", ""),
+		MobileWSToken:          envOr("MOBILE_WS_TOKEN", token),
 		HomeDir:                homeDir,
 		ProjectsBaseDir:        envOr("BOT_PROJECTS_DIR", defaultProjects),
 		ObsidianVaultDir:       envOr("BOT_OBSIDIAN_DIR", defaultObsidian),
@@ -178,4 +183,42 @@ func envFloat(k string, def float64) float64 {
 		}
 	}
 	return def
+}
+
+// DetectTailscaleIPv4 busca la IP privada de Tailscale (rango CGNAT 100.64.0.0/10 o interfaz tailscale0).
+func DetectTailscaleIPv4() string {
+	_, tailscaleNet, _ := net.ParseCIDR("100.64.0.0/10")
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return ""
+	}
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			var ip net.IP
+			switch v := a.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			if ip == nil {
+				continue
+			}
+			ip4 := ip.To4()
+			if ip4 == nil {
+				continue
+			}
+			if strings.HasPrefix(strings.ToLower(iface.Name), "tailscale") || (tailscaleNet != nil && tailscaleNet.Contains(ip4)) {
+				return ip4.String()
+			}
+		}
+	}
+	return ""
 }
