@@ -16,7 +16,7 @@ void main() {
     await tester.pumpWidget(PaulobotCompanionApp(client: client));
 
     expect(find.byType(RiveCompanionAvatar), findsOneWidget);
-    expect(find.textContaining('Asistente AGY'), findsOneWidget);
+    expect(find.textContaining('HyprAgent'), findsOneWidget);
     expect(find.textContaining('PC suspendida / desconectada'), findsOneWidget);
     expect(client.characterState, CharacterState.sleeping);
 

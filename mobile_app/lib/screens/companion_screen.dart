@@ -21,7 +21,7 @@ class _CompanionScreenState extends State<CompanionScreen> {
   final TextEditingController _inputController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   int _lastMsgCount = 0;
-  String _assistantName = 'Asistente AGY';
+  String _assistantName = 'HyprAgent';
 
   @override
   void initState() {
