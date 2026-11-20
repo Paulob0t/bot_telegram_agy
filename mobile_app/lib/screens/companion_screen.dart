@@ -63,6 +63,22 @@ class _CompanionScreenState extends State<CompanionScreen> {
   void _handleSend() {
     final text = _inputController.text.trim();
     if (text.isEmpty) return;
+    final lower = text.toLowerCase();
+    if (lower == '/model' || lower == '/modelo') {
+      _inputController.clear();
+      _openOptionPicker('/model');
+      return;
+    }
+    if (lower == '/project' || lower == '/cd') {
+      _inputController.clear();
+      _openOptionPicker('/project');
+      return;
+    }
+    if (lower == '/resume' || lower == '/chats') {
+      _inputController.clear();
+      _openOptionPicker('/resume');
+      return;
+    }
     if (widget.client.sendPrompt(text)) {
       _inputController.clear();
     }
