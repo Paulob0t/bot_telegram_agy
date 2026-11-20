@@ -10,7 +10,7 @@ import 'package:path_provider/path_provider.dart';
 import '../models/agent_event.dart';
 import 'notifications.dart';
 
-const int currentAppBuildNumber = 6;
+const int currentAppBuildNumber = 7;
 
 /// Cliente WebSocket resiliente con reconexión exponencial y sincronización
 /// directa con la State Machine de Rive (`idle`, `listening`, `thinking`, `speaking`, `sleeping`).
@@ -470,16 +470,47 @@ class AgyWsClient extends ChangeNotifier {
       final wsUri = Uri.parse(_wsUrl);
       final scheme = wsUri.scheme == 'wss' ? 'https' : 'http';
       final apkUri = wsUri.replace(scheme: scheme, path: '/apk');
+
+      _messages.add(
+        ChatMessage(
+          id: 'ota_${DateTime.now().microsecondsSinceEpoch}',
+          isUser: false,
+          text: '⏳ Descargando actualización ($_availableVersion)...',
+          timestamp: DateTime.now(),
+        ),
+      );
+      notifyListeners();
+
       final apkRes = await http
           .get(apkUri, headers: {'Authorization': 'Bearer $_bearerToken'})
-          .timeout(const Duration(seconds: 45));
-      if (apkRes.statusCode != 200) return;
+          .timeout(const Duration(seconds: 90));
+      if (apkRes.statusCode != 200) {
+        throw Exception('HTTP ${apkRes.statusCode}');
+      }
 
       final dir = await getTemporaryDirectory();
       final apkFile = File('${dir.path}/paulobot-update.apk');
       await apkFile.writeAsBytes(apkRes.bodyBytes, flush: true);
-      await OpenFilex.open(apkFile.path);
-    } catch (_) {}
+
+      final result = await OpenFilex.open(
+        apkFile.path,
+        type: 'application/vnd.android.package-archive',
+      );
+      if (result.type != ResultType.done) {
+        throw Exception('${result.type.name}: ${result.message}');
+      }
+    } catch (err) {
+      _messages.add(
+        ChatMessage(
+          id: 'ota_err_${DateTime.now().microsecondsSinceEpoch}',
+          isUser: false,
+          text: '⚠️ No se pudo abrir el instalador: $err',
+          isError: true,
+          timestamp: DateTime.now(),
+        ),
+      );
+      notifyListeners();
+    }
   }
 
   void _setCharacterState(CharacterState next) {
