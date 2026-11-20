@@ -290,15 +290,9 @@ class _CompanionScreenState extends State<CompanionScreen> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Container(
-                          width: 68,
-                          height: 68,
-                          padding: const EdgeInsets.all(6),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF15181C),
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(color: const Color(0xFF21262D)),
-                          ),
+                        SizedBox(
+                          width: 76,
+                          height: 66,
                           child: RiveCompanionAvatar(state: state),
                         ),
                         const SizedBox(height: 6),

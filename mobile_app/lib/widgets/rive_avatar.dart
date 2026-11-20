@@ -189,10 +189,10 @@ class _ProceduralCharacterPainter extends CustomPainter {
     final headRect = RRect.fromRectAndRadius(
       Rect.fromCenter(
         center: headCenter,
-        width: radius * 1.95,
-        height: radius * 1.95,
+        width: radius * 2.1,
+        height: radius * 1.75,
       ),
-      const Radius.circular(16),
+      const Radius.circular(20),
     );
     canvas.drawRRect(headRect, shellPaint);
     canvas.drawRRect(headRect, borderPaint);
