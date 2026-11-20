@@ -115,7 +115,11 @@ func RunClaudeHook(cfg *config.Config, st *state.BotSessionState) {
 	if title == "" {
 		title = "Tarea Claude lista"
 	}
-	msg := fmt.Sprintf("✓ *[Claude] %s* · `%s`", title, wsName)
+	engineLabel := "Claude"
+	if strings.Contains(transcriptPath, ".gemini") || strings.Contains(transcriptPath, "antigravity") {
+		engineLabel = "AGY"
+	}
+	msg := fmt.Sprintf("✓ *[%s] %s* · `%s`", engineLabel, title, wsName)
 	if cleanBody := formatFullResponse(body); cleanBody != "" {
 		msg += "\n\n" + cleanBody
 	}
@@ -124,7 +128,7 @@ func RunClaudeHook(cfg *config.Config, st *state.BotSessionState) {
 		tg := telegram.New(cfg.Token)
 		_, _ = tg.SendMessage(cfg.AuthorizedUserID, msg, nil)
 	}
-	notifyMobileApp(cfg, fmt.Sprintf("✓ [Claude] %s · %s", title, wsName), formatFullResponse(body))
+	notifyMobileApp(cfg, fmt.Sprintf("✓ [%s] %s · %s", engineLabel, title, wsName), formatFullResponse(body))
 }
 
 func RunNotifyCLI(cfg *config.Config, st *state.BotSessionState, args []string) int {
