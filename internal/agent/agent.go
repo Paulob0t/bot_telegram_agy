@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"telegram-paulobot/internal/config"
 	"telegram-paulobot/internal/executor"
@@ -185,6 +186,7 @@ func (s *Service) Execute(parentCtx context.Context, req Request, onEvent func(E
 	}()
 
 	s.setState(StateThinking, onEvent)
+	startedAt := time.Now()
 
 	formattedPrompt := prompt
 	if req.Source == "mobile" && !strings.Contains(formattedPrompt, "[Mobile:") {
@@ -203,9 +205,18 @@ func (s *Service) Execute(parentCtx context.Context, req Request, onEvent func(E
 			}
 		},
 		OnChunk: func(text, toolStatus string, done bool) {
+			finalText := text
+			if done && req.Source == "mobile" && finalText != "" {
+				elapsed := time.Since(startedAt).Round(100 * time.Millisecond)
+				mod := s.st.CurrentModel
+				if mod == "" {
+					mod = "gemini-4-hydrogen-low"
+				}
+				finalText = fmt.Sprintf("%s\n\n— ⏱️ %s · 📂 %s · 🤖 %s", finalText, elapsed, s.st.GetCWDShortName(s.st.CurrentCWD), mod)
+			}
 			s.broadcast(Event{
 				Type:       EventTypeChunk,
-				Text:       text,
+				Text:       finalText,
 				ToolStatus: toolStatus,
 				Done:       done,
 			}, onEvent)

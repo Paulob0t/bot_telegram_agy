@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"telegram-paulobot/internal/config"
@@ -67,7 +68,7 @@ func TestServiceStateTransitionsAndChunks(t *testing.T) {
 				sawIdle = true
 			}
 		}
-		if ev.Type == EventTypeChunk && ev.Done && ev.Text == "Hola desde el core desacoplado" {
+		if ev.Type == EventTypeChunk && ev.Done && strings.HasPrefix(ev.Text, "Hola desde el core desacoplado") {
 			sawDoneChunk = true
 		}
 	}

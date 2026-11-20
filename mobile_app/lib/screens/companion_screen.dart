@@ -23,6 +23,22 @@ class _CompanionScreenState extends State<CompanionScreen> {
   final ScrollController _scrollController = ScrollController();
   int _lastMsgCount = 0;
   String _assistantName = 'HyprAgent';
+  AvatarStyle _avatarStyle = AvatarStyle.cubeBot;
+  AvatarAccessory _avatarAccessory = AvatarAccessory.none;
+  Color? _avatarAccent;
+  String? _customRivePath;
+  String _slashQuery = '';
+
+  static const List<(String, String)> _allSlashCommands = [
+    ('/scan', 'Escanear PC y proyectos'),
+    ('/status', 'Estado del sistema'),
+    ('/project', 'Cambiar proyecto'),
+    ('/model', 'Cambiar modelo'),
+    ('/resume', 'Historial de chats'),
+    ('/new', 'Nuevo chat limpio'),
+    ('/tokens', 'Cuotas de tokens'),
+    ('/stop', 'Detener ejecución'),
+  ];
 
   @override
   void initState() {
@@ -32,7 +48,14 @@ class _CompanionScreenState extends State<CompanionScreen> {
   }
 
   void _onTextChanged() {
-    widget.client.setUserListening(_inputController.text.trim().isNotEmpty);
+    final text = _inputController.text;
+    widget.client.setUserListening(text.trim().isNotEmpty);
+    final nextQuery = text.startsWith('/') && !text.contains(' ')
+        ? text.toLowerCase()
+        : '';
+    if (nextQuery != _slashQuery) {
+      setState(() => _slashQuery = nextQuery);
+    }
   }
 
   void _onClientUpdated() {
@@ -293,7 +316,13 @@ class _CompanionScreenState extends State<CompanionScreen> {
                         SizedBox(
                           width: 76,
                           height: 66,
-                          child: RiveCompanionAvatar(state: state),
+                          child: RiveCompanionAvatar(
+                            state: state,
+                            style: _avatarStyle,
+                            accessory: _avatarAccessory,
+                            customAccent: _avatarAccent,
+                            customRivePath: _customRivePath,
+                          ),
                         ),
                         const SizedBox(height: 6),
                         Container(
@@ -374,6 +403,48 @@ class _CompanionScreenState extends State<CompanionScreen> {
                       },
                     ),
             ),
+
+            if (_slashQuery.isNotEmpty)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: const BoxDecoration(
+                  color: Color(0xFF15181C),
+                  border: Border(
+                    top: BorderSide(color: Color(0xFF21262D)),
+                  ),
+                ),
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      for (final cmd in _allSlashCommands.where(
+                        (c) => c.$1.startsWith(_slashQuery),
+                      ))
+                        Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: ActionChip(
+                            backgroundColor: const Color(0xFF1F242A),
+                            side: const BorderSide(color: Color(0xFF30363D)),
+                            label: Text(
+                              '${cmd.$1} · ${cmd.$2}',
+                              style: const TextStyle(
+                                color: Color(0xFFE6EDF3),
+                                fontSize: 12,
+                              ),
+                            ),
+                            onPressed: () {
+                              _inputController.text = '${cmd.$1} ';
+                              _inputController.selection = TextSelection.fromPosition(
+                                TextPosition(offset: _inputController.text.length),
+                              );
+                            },
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
 
             // Barra de entrada
             Container(
@@ -730,6 +801,21 @@ class _CompanionScreenState extends State<CompanionScreen> {
                     ),
                   const Divider(color: Color(0xFF21262D), height: 16),
                   ListTile(
+                    leading: const Icon(Icons.face_retouching_natural, color: Color(0xFF8B949E), size: 20),
+                    title: const Text(
+                      'Personalizar personaje',
+                      style: TextStyle(color: Color(0xFFE6EDF3), fontSize: 14),
+                    ),
+                    subtitle: const Text(
+                      'Estilo, accesorios, color o .riv',
+                      style: TextStyle(color: Color(0xFF6E7681), fontSize: 12),
+                    ),
+                    onTap: () {
+                      Navigator.of(context).pop();
+                      _openAvatarCustomizer();
+                    },
+                  ),
+                  ListTile(
                     leading: const Icon(Icons.tune, color: Color(0xFF8B949E), size: 20),
                     title: const Text(
                       'Ajustes y conexión',
@@ -770,6 +856,123 @@ class _CompanionScreenState extends State<CompanionScreen> {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+  void _openAvatarCustomizer() {
+    const colors = [
+      Color(0xFF3FB950),
+      Color(0xFF58A6FF),
+      Color(0xFFD97757),
+      Color(0xFFA371F7),
+      Color(0xFFD29922),
+    ];
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF15181C),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetCtx) => StatefulBuilder(
+        builder: (ctx, setSheetState) => Padding(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                'Personalizar personaje',
+                style: TextStyle(
+                  color: Color(0xFFE6EDF3),
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text('Estilo', style: TextStyle(color: Color(0xFF8B949E), fontSize: 12)),
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 8,
+                children: [
+                  for (final s in AvatarStyle.values)
+                    ChoiceChip(
+                      label: Text(s.name),
+                      selected: _avatarStyle == s && _customRivePath == null,
+                      onSelected: (_) {
+                        setState(() {
+                          _avatarStyle = s;
+                          _customRivePath = null;
+                        });
+                        setSheetState(() {});
+                      },
+                    ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              const Text('Accesorio', style: TextStyle(color: Color(0xFF8B949E), fontSize: 12)),
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 8,
+                children: [
+                  for (final a in AvatarAccessory.values)
+                    ChoiceChip(
+                      label: Text(a.name),
+                      selected: _avatarAccessory == a,
+                      onSelected: (_) {
+                        setState(() => _avatarAccessory = a);
+                        setSheetState(() {});
+                      },
+                    ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              const Text('Color', style: TextStyle(color: Color(0xFF8B949E), fontSize: 12)),
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  for (final c in colors)
+                    GestureDetector(
+                      onTap: () {
+                        setState(() => _avatarAccent = c);
+                        setSheetState(() {});
+                      },
+                      child: Container(
+                        margin: const EdgeInsets.only(right: 10),
+                        width: 28,
+                        height: 28,
+                        decoration: BoxDecoration(
+                          color: c,
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: _avatarAccent == c ? Colors.white : Colors.transparent,
+                            width: 2,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              OutlinedButton.icon(
+                onPressed: () async {
+                  final picked = await FilePicker.pickFiles(type: FileType.any);
+                  if (picked.isEmpty) return;
+                  final path = picked.first.path;
+                  if (path == null || !path.toLowerCase().endsWith('.riv')) return;
+                  setState(() => _customRivePath = path);
+                  if (sheetCtx.mounted) Navigator.of(sheetCtx).pop();
+                },
+                icon: const Icon(Icons.upload_file, size: 18),
+                label: Text(
+                  _customRivePath != null
+                      ? 'Rive activo: ${_customRivePath!.split('/').last}'
+                      : 'Importar animación .riv',
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
