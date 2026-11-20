@@ -603,6 +603,28 @@ class _CompanionScreenState extends State<CompanionScreen> {
                         }
                       },
                     ),
+                  if (widget.client.updateAvailable) ...[
+                    const Divider(color: Color(0xFF21262D), height: 16),
+                    ListTile(
+                      leading: const Icon(Icons.system_update, color: Color(0xFF3FB950), size: 20),
+                      title: Text(
+                        'Actualizar App (${widget.client.availableVersion})',
+                        style: const TextStyle(
+                          color: Color(0xFF3FB950),
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      subtitle: const Text(
+                        'Nueva versión disponible por Tailscale',
+                        style: TextStyle(color: Color(0xFF8B949E), fontSize: 11),
+                      ),
+                      onTap: () {
+                        Navigator.of(context).pop();
+                        widget.client.installAvailableUpdate();
+                      },
+                    ),
+                  ],
                 ],
               ),
             ),

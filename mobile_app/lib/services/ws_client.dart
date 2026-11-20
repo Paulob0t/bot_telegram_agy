@@ -10,7 +10,7 @@ import 'package:path_provider/path_provider.dart';
 import '../models/agent_event.dart';
 import 'notifications.dart';
 
-const int currentAppBuildNumber = 3;
+const int currentAppBuildNumber = 4;
 
 /// Cliente WebSocket resiliente con reconexión exponencial y sincronización
 /// directa con la State Machine de Rive (`idle`, `listening`, `thinking`, `speaking`, `sleeping`).
@@ -32,6 +32,8 @@ class AgyWsClient extends ChangeNotifier {
   final List<ChatMessage> _messages = [];
   String? _activeStreamingMsgId;
   String? _lastError;
+  bool _updateAvailable = false;
+  String _availableVersion = '';
 
   final Duration connectTimeout;
   final Duration pingInterval;
@@ -58,6 +60,8 @@ class AgyWsClient extends ChangeNotifier {
   CharacterState get characterState => _characterState;
   List<ChatMessage> get messages => List.unmodifiable(_messages);
   String? get lastError => _lastError;
+  bool get updateAvailable => _updateAvailable;
+  String get availableVersion => _availableVersion;
 
   /// Actualiza endpoint de Tailscale y Bearer Token en caliente y reconecta.
   Future<void> updateCredentials({
@@ -443,8 +447,28 @@ class AgyWsClient extends ChangeNotifier {
       final data = jsonDecode(res.body) as Map<String, dynamic>;
       final serverBuild = (data['build'] as num?)?.toInt() ?? 0;
       final apkExists = data['apk_exists'] as bool? ?? false;
-      if (!apkExists || serverBuild <= currentAppBuildNumber) return;
+      if (!apkExists || serverBuild <= currentAppBuildNumber) {
+        if (_updateAvailable) {
+          _updateAvailable = false;
+          notifyListeners();
+        }
+        return;
+      }
 
+      _updateAvailable = true;
+      _availableVersion = data['version'] as String? ?? 'v$serverBuild';
+      notifyListeners();
+
+      await installAvailableUpdate();
+    } catch (_) {
+      // Silencioso en tests o si no hay actualización disponible
+    }
+  }
+
+  Future<void> installAvailableUpdate() async {
+    try {
+      final wsUri = Uri.parse(_wsUrl);
+      final scheme = wsUri.scheme == 'wss' ? 'https' : 'http';
       final apkUri = wsUri.replace(scheme: scheme, path: '/apk');
       final apkRes = await http
           .get(apkUri, headers: {'Authorization': 'Bearer $_bearerToken'})
@@ -455,9 +479,7 @@ class AgyWsClient extends ChangeNotifier {
       final apkFile = File('${dir.path}/paulobot-update.apk');
       await apkFile.writeAsBytes(apkRes.bodyBytes, flush: true);
       await OpenFilex.open(apkFile.path);
-    } catch (_) {
-      // Silencioso en tests o si no hay actualización disponible
-    }
+    } catch (_) {}
   }
 
   void _setCharacterState(CharacterState next) {
