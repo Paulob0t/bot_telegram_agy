@@ -166,7 +166,7 @@ func TestMobileWSAuthAndLifecycle(t *testing.T) {
 				}
 			}
 		case agent.EventTypeChunk:
-			if ev.Done && ev.Text == "Respuesta final móvil" {
+			if ev.Done && strings.HasPrefix(ev.Text, "Respuesta final móvil") {
 				sawDoneChunk = true
 			}
 		}

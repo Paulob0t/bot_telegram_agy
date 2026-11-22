@@ -67,6 +67,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/options", s.handleOptions)
 	mux.HandleFunc("/version", s.handleVersion)
 	mux.HandleFunc("/apk", s.handleAPK)
+	mux.HandleFunc("/avatar/from-photo", s.handleAvatarFromPhoto)
+	mux.HandleFunc("/obsidian", s.handleObsidian)
 	return mux
 }
 
@@ -319,10 +321,7 @@ func (s *Server) handleOptions(w http.ResponseWriter, r *http.Request) {
 func (s *Server) scanPCEnvironment() map[string]any {
 	projs := projects.ListAvailableProjects(s.cfg)
 	var projNames []string
-	for i, p := range projs {
-		if i >= 12 {
-			break
-		}
+	for _, p := range projs {
 		projNames = append(projNames, p.Name)
 	}
 
@@ -349,7 +348,7 @@ func (s *Server) scanPCEnvironment() map[string]any {
 }
 
 func (s *Server) apkFilePath() string {
-	return filepath.Join("/mnt/datos/Projects/telegram-paulobot/mobile_app/build/app/outputs/flutter-apk/app-release.apk")
+	return filepath.Join("/mnt/datos/Projects/agente-bot/mobile_app/build/app/outputs/flutter-apk/app-release.apk")
 }
 
 func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
@@ -359,7 +358,7 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	}
 	verStr := "1.0.0+1"
 	buildNum := 1
-	if raw, err := os.ReadFile("/mnt/datos/Projects/telegram-paulobot/mobile_app/pubspec.yaml"); err == nil {
+	if raw, err := os.ReadFile("/mnt/datos/Projects/agente-bot/mobile_app/pubspec.yaml"); err == nil {
 		for _, line := range strings.Split(string(raw), "\n") {
 			line = strings.TrimSpace(line)
 			if strings.HasPrefix(line, "version:") {
@@ -531,22 +530,22 @@ func (s *Server) handleMobileCommand(ws *wsConn, rawText string) bool {
 	case "/agy":
 		s.st.CurrentEngine = "agy"
 		_ = s.st.Save()
-		reply("🔵 Motor cambiado a Antigravity (AGY).")
+		reply("Motor cambiado a Antigravity (AGY).")
 		return true
 
 	case "/claude":
 		s.st.CurrentEngine = "claude"
 		_ = s.st.Save()
-		reply("🟠 Motor cambiado a Claude Code.")
+		reply("Motor cambiado a Claude Code.")
 		return true
 
 	case "/new", "/nuevo":
 		if s.st.CurrentEngine == "claude" {
-			s.st.SetClaudeSession("NEW", "➕ Nuevo chat Claude", s.st.CurrentCWD)
+			s.st.SetClaudeSession("NEW", "Nuevo chat Claude", s.st.CurrentCWD)
 		} else {
-			s.st.SetAgyConversation("NEW", "➕ Nuevo chat independiente", s.st.CurrentCWD)
+			s.st.SetAgyConversation("NEW", "Nuevo chat independiente", s.st.CurrentCWD)
 		}
-		reply("🆕 Nuevo chat preparado en " + s.st.GetCWDShortName(s.st.CurrentCWD))
+		reply("Nuevo chat preparado en " + s.st.GetCWDShortName(s.st.CurrentCWD))
 		return true
 
 	case "/project", "/cd":
@@ -554,13 +553,13 @@ func (s *Server) handleMobileCommand(ws *wsConn, rawText string) bool {
 			for _, p := range projects.ListAvailableProjects(s.cfg) {
 				if strings.EqualFold(p.Name, arg) || strings.Contains(strings.ToLower(p.Name), strings.ToLower(arg)) {
 					s.st.SetCWD(p.Path)
-					reply("✓ Proyecto cambiado:\n" + projects.FormatActiveCWDSummary(p.Path))
+					reply("Proyecto cambiado:\n" + projects.FormatActiveCWDSummary(p.Path))
 					return true
 				}
 			}
 		}
 		var sb strings.Builder
-		sb.WriteString("📂 Proyecto actual: " + s.st.GetCWDShortName(s.st.CurrentCWD) + "\n\nProyectos recientes (escribe `/cd <nombre>`):")
+		sb.WriteString("Proyecto actual: " + s.st.GetCWDShortName(s.st.CurrentCWD) + "\n\nProyectos recientes (escribe `/cd <nombre>`):")
 		for i, p := range projects.ListAvailableProjects(s.cfg) {
 			if i >= 10 {
 				break
@@ -575,12 +574,12 @@ func (s *Server) handleMobileCommand(ws *wsConn, rawText string) bool {
 			s.st.CurrentModel = arg
 			_ = s.st.Save()
 			effDisp, _, _ := models.GetEffectiveModelInfo(s.cfg, s.st)
-			reply("✓ Modelo cambiado a: " + effDisp)
+			reply("Modelo cambiado a: " + effDisp)
 			return true
 		}
 		effDisp, _, _ := models.GetEffectiveModelInfo(s.cfg, s.st)
 		var sb strings.Builder
-		sb.WriteString("🤖 Modelo actual: " + effDisp + "\n\nModelos (escribe `/model <id>`):")
+		sb.WriteString("Modelo actual: " + effDisp + "\n\nModelos (escribe `/model <id>`):")
 		for i, m := range models.GetCatalog(s.cfg) {
 			if i >= 12 {
 				break
@@ -594,21 +593,26 @@ func (s *Server) handleMobileCommand(ws *wsConn, rawText string) bool {
 		if arg != "" {
 			if s.st.CurrentEngine == "claude" {
 				s.st.SetClaudeSession(arg, arg, s.st.CurrentCWD)
+				reply("Chat activo cambiado.")
 			} else {
 				title := chats.GetAgyConversationTitle(s.cfg, arg)
-				s.st.SetAgyConversation(arg, "💬 "+title, "")
+				s.st.SetAgyConversation(arg, title, "")
+				msg := "Chat activo: " + title
+				if preview := chats.GetAgyConversationPreview(arg, 4); preview != "" {
+					msg += "\n\nÚltimos mensajes:\n" + preview
+				}
+				reply(msg)
 			}
-			reply("✓ Chat activo cambiado.")
 			return true
 		}
 		var sb strings.Builder
 		if s.st.CurrentEngine == "claude" {
-			sb.WriteString("⌘ Sesiones recientes (Claude):")
+			sb.WriteString("Sesiones recientes (Claude):")
 			for _, cs := range chats.ListClaudeSessions(s.cfg, 6) {
 				sb.WriteString("\n• " + cs.Title)
 			}
 		} else {
-			sb.WriteString("🗂️ Chats recientes (AGY):")
+			sb.WriteString("Chats recientes (AGY):")
 			for _, c := range chats.ListAgyConversations(s.cfg, 6) {
 				sb.WriteString("\n• " + c.Title)
 			}
@@ -621,7 +625,7 @@ func (s *Server) handleMobileCommand(ws *wsConn, rawText string) bool {
 		projs, _ := sc["projects"].([]string)
 		clis, _ := sc["clis"].([]string)
 		reply(fmt.Sprintf(
-			"🔍 Escaneo de PC completado:\n• Motor: %s · Modelo: %v\n• Proyecto activo: %v\n• Proyectos (%v): %s\n• CLIs detectados: %s",
+			"Escaneo de PC completado:\n• Motor: %s · Modelo: %v\n• Proyecto activo: %v\n• Proyectos (%v): %s\n• CLIs detectados: %s",
 			sc["engine"], sc["model"], sc["cwd_short"], sc["total_projs"], strings.Join(projs, ", "), strings.Join(clis, ", "),
 		))
 		return true

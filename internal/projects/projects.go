@@ -42,6 +42,12 @@ func ListAvailableProjects(cfg *config.Config) []Project {
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].ModTime.After(out[j].ModTime)
 	})
+	if home, err := os.UserHomeDir(); err == nil && home != "" && home != cfg.ProjectsBaseDir {
+		out = append([]Project{{
+			Name: "~ (" + filepath.Base(home) + ")",
+			Path: home,
+		}}, out...)
+	}
 	return out
 }
 
