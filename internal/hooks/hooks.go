@@ -74,7 +74,7 @@ func RunAgyHook(cfg *config.Config, st *state.BotSessionState) {
 		tg := telegram.New(cfg.Token)
 		_, _ = tg.SendMessage(cfg.AuthorizedUserID, msg, nil)
 	}
-	notifyMobileApp(cfg, fmt.Sprintf("✓ [Claude] %s · %s", title, wsName), formatFullResponse(body))
+	notifyMobileApp(cfg, fmt.Sprintf("✓ [AGY] %s · %s", title, wsName), formatFullResponse(body))
 }
 
 func RunClaudeHook(cfg *config.Config, st *state.BotSessionState) {

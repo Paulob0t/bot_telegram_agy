@@ -29,6 +29,8 @@ const (
 	EventTypeChunk  EventType = "chunk"
 	EventTypeNotify EventType = "notify"
 	EventTypeError  EventType = "error"
+	// EventTypeAgentStatus drives the 3D avatar: granular state + exact file/command.
+	EventTypeAgentStatus EventType = "agent_status"
 )
 
 // Event modela el contrato unificado de salida para WebSocket (Flutter + Rive) y Telegram.
@@ -40,6 +42,9 @@ type Event struct {
 	ToolStatus string    `json:"tool_status,omitempty"`
 	Done       bool      `json:"done"`
 	Message    string    `json:"message,omitempty"`
+	Label      string    `json:"label,omitempty"`
+	Detail     string    `json:"detail,omitempty"`
+	Engine     string    `json:"engine,omitempty"`
 }
 
 type Request struct {
@@ -144,6 +149,27 @@ func (s *Service) EmitExternalNotification(title, body string) {
 		Text:  body,
 		Done:  true,
 	}, nil)
+	engine := "agy"
+	if strings.Contains(strings.ToLower(title+" "+body), "claude") {
+		engine = "claude"
+	}
+	s.broadcast(Event{
+		Type:   EventTypeAgentStatus,
+		State:  State(executor.ActivitySuccess),
+		Label:  "Listo · tarea completada",
+		Engine: engine,
+		Done:   true,
+	}, nil)
+}
+
+func (s *Service) emitActivity(a executor.Activity, perReq func(Event)) {
+	s.broadcast(Event{
+		Type:   EventTypeAgentStatus,
+		State:  State(a.State),
+		Label:  a.Label,
+		Detail: a.Detail,
+		Engine: s.st.CurrentEngine,
+	}, perReq)
 }
 
 func (s *Service) setState(next State, perReq func(Event)) {
@@ -169,8 +195,13 @@ func (s *Service) Execute(parentCtx context.Context, req Request, onEvent func(E
 		return "", err
 	}
 
-	s.execMu.Lock()
-	defer s.execMu.Unlock()
+	if s.execMu.TryLock() {
+		defer s.execMu.Unlock()
+	} else {
+		s.emitActivity(executor.Activity{State: executor.ActivityStarting, Label: "Mensaje en cola · esperando turno"}, onEvent)
+		s.execMu.Lock()
+		defer s.execMu.Unlock()
+	}
 
 	ctx, cancel := context.WithCancel(parentCtx)
 	s.stateMu.Lock()
@@ -186,6 +217,7 @@ func (s *Service) Execute(parentCtx context.Context, req Request, onEvent func(E
 	}()
 
 	s.setState(StateThinking, onEvent)
+	s.emitActivity(executor.Activity{State: executor.ActivityStarting, Label: "Iniciando tarea"}, onEvent)
 	startedAt := time.Now()
 
 	formattedPrompt := prompt
@@ -204,6 +236,9 @@ func (s *Service) Execute(parentCtx context.Context, req Request, onEvent func(E
 				s.setState(StateIdle, onEvent)
 			}
 		},
+		OnActivity: func(a executor.Activity) {
+			s.emitActivity(a, onEvent)
+		},
 		OnChunk: func(text, toolStatus string, done bool) {
 			finalText := text
 			if done && req.Source == "mobile" && finalText != "" {
@@ -212,7 +247,7 @@ func (s *Service) Execute(parentCtx context.Context, req Request, onEvent func(E
 				if mod == "" {
 					mod = "gemini-4-hydrogen-low"
 				}
-				finalText = fmt.Sprintf("%s\n\n— ⏱️ %s · 📂 %s · 🤖 %s", finalText, elapsed, s.st.GetCWDShortName(s.st.CurrentCWD), mod)
+				finalText = fmt.Sprintf("%s\n\n— %s · %s · %s", finalText, elapsed, s.st.GetCWDShortName(s.st.CurrentCWD), mod)
 			}
 			s.broadcast(Event{
 				Type:       EventTypeChunk,
@@ -223,11 +258,17 @@ func (s *Service) Execute(parentCtx context.Context, req Request, onEvent func(E
 		},
 	})
 
+	elapsed := time.Since(startedAt).Round(100 * time.Millisecond)
 	if err != nil && ctx.Err() == nil {
 		s.broadcast(Event{
 			Type:    EventTypeError,
 			Message: err.Error(),
 		}, onEvent)
+		s.emitActivity(executor.Activity{State: executor.ActivityError, Label: "Error en ejecución", Detail: err.Error()}, onEvent)
+	} else if ctx.Err() != nil {
+		s.emitActivity(executor.Activity{State: executor.ActivityError, Label: "Ejecución detenida"}, onEvent)
+	} else {
+		s.emitActivity(executor.Activity{State: executor.ActivitySuccess, Label: fmt.Sprintf("Listo · terminado en %s", elapsed)}, onEvent)
 	}
 
 	return out, err

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -19,6 +18,8 @@ import (
 type StreamCallbacks struct {
 	OnState func(state string)
 	OnChunk func(text, toolStatus string, done bool)
+	// OnActivity reports granular tool activity (CODING_EDIT, EXECUTING, ...).
+	OnActivity func(a Activity)
 }
 
 // RunPrompt mantiene compatibilidad hacia atrás con callbacks simples de texto parcial.
@@ -57,6 +58,15 @@ func RunPromptWithEvents(ctx context.Context, cfg *config.Config, st *state.BotS
 		}
 	}
 	defer emitState("idle")
+
+	var lastActivity Activity
+	emitActivity := func(a Activity) {
+		if cb.OnActivity == nil || a == lastActivity {
+			return
+		}
+		lastActivity = a
+		cb.OnActivity(a)
+	}
 
 	fullPrompt := prompt
 	if !strings.Contains(fullPrompt, "[Telegram:") && !strings.Contains(fullPrompt, "[Mobile:") {
@@ -153,6 +163,9 @@ func RunPromptWithEvents(ctx context.Context, cfg *config.Config, st *state.BotS
 	emitState("thinking")
 
 	doneCh := make(chan struct{})
+	if !isClaude {
+		go watchAgyTranscript(doneCh, cfg, usedConvID, emitActivity)
+	}
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -185,6 +198,11 @@ func RunPromptWithEvents(ctx context.Context, cfg *config.Config, st *state.BotS
 		if line == "" {
 			continue
 		}
+		if strings.HasPrefix(line, "root agent idle; waiting for") {
+			emitState("thinking")
+			emitActivity(Activity{State: ActivityExecuting, Label: "Esperando proceso en segundo plano"})
+			continue
+		}
 		if !strings.HasPrefix(line, "{") {
 			accumulated.WriteString(line)
 			accumulated.WriteByte('\n')
@@ -214,12 +232,16 @@ func RunPromptWithEvents(ctx context.Context, cfg *config.Config, st *state.BotS
 					accumulated.WriteString(delta)
 					toolStatus = ""
 					emitState("speaking")
+					emitActivity(Activity{State: ActivityWrappingUp, Label: "Casi listo · redactando respuesta"})
+				}
+				if act, ok := classifyAgyStep(step); ok {
+					emitActivity(act)
 				}
 				if ts := extractStepToolStatus(step); ts != "" {
 					toolStatus = ts
 					emitState("thinking")
 				} else if (step["thinking_delta"] != nil || step["thinking"] != nil) && accumulated.Len() == 0 {
-					toolStatus = "◈ _Razonando…_"
+					toolStatus = "Analizando contexto"
 					emitState("thinking")
 				}
 			}
@@ -240,7 +262,10 @@ func RunPromptWithEvents(ctx context.Context, cfg *config.Config, st *state.BotS
 						} else if btype == "tool_use" {
 							tname, _ := blk["name"].(string)
 							if tname != "" {
-								toolStatus = fmt.Sprintf("⚙ _Ejecutando `%s`…_", tname)
+								input, _ := blk["input"].(map[string]any)
+								act := classifyClaudeTool(tname, input)
+								toolStatus = act.Label
+								emitActivity(act)
 								emitState("thinking")
 							}
 						}
@@ -250,6 +275,7 @@ func RunPromptWithEvents(ctx context.Context, cfg *config.Config, st *state.BotS
 						accumulated.WriteString(strings.Join(parts, "\n"))
 						toolStatus = ""
 						emitState("speaking")
+						emitActivity(Activity{State: ActivityWrappingUp, Label: "Casi listo · redactando respuesta"})
 					}
 				}
 			}
@@ -315,30 +341,12 @@ func RunPromptWithEvents(ctx context.Context, cfg *config.Config, st *state.BotS
 }
 
 func extractStepToolStatus(step map[string]any) string {
-	stateStr, _ := step["state"].(string)
-	icon := "⚙"
-	if strings.Contains(strings.ToUpper(stateStr), "DONE") {
-		icon = "✓"
-	}
-	if rc, ok := step["run_command"].(map[string]any); ok {
-		cmdLine, _ := rc["command_line"].(string)
-		if cmdLine == "" {
-			cmdLine, _ = rc["command"].(string)
-		}
-		if cmdLine != "" {
-			return fmt.Sprintf("%s *Comando:* `%s`", icon, cleanSnippet(cmdLine, 60))
-		}
-	}
-	for _, key := range []string{"edit_file", "create_file", "view_file"} {
-		if m, ok := step[key].(map[string]any); ok {
-			if fp, ok := m["file_path"].(string); ok && fp != "" {
-				return fmt.Sprintf("%s *Archivo:* `%s`", icon, cleanSnippet(filepath.Base(fp), 48))
-			}
-		}
+	if act, ok := classifyAgyStep(step); ok {
+		return act.Label
 	}
 	for _, k := range []string{"tool_summary", "toolSummary", "tool_action", "toolAction"} {
 		if v, ok := step[k].(string); ok && v != "" {
-			return fmt.Sprintf("%s _%s_", icon, cleanSnippet(v, 55))
+			return cleanSnippet(v, 55)
 		}
 	}
 	return ""
