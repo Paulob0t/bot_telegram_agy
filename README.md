@@ -1,6 +1,6 @@
-# Paulobot — Bot de Telegram en Go para Antigravity (AGY) y Claude Code
+# HyprAgent (`agente-bot`) — Core Go + App Móvil para Antigravity (AGY) y Claude Code
 
-Bot de control remoto, gestión de sesiones, recepción de archivos y monitor de cuotas de IA escrito **100% en Go puro** (`0 dependencias externas`, `0 Python`), diseñado para operar **Antigravity CLI (`agy`)** y **Claude Code (`claude`)** desde Telegram con consumo mínimo de recursos (**~1.5 MB – 10 MB RAM**).
+Bot y servidor WebSocket de control remoto, gestión de sesiones, recepción de archivos y monitor de cuotas de IA escrito **100% en Go puro** (`0 dependencias externas`, `0 Python`) con cliente móvil Flutter (`mobile_app/`), diseñado para operar **Antigravity CLI (`agy`)** y **Claude Code (`claude`)** con consumo mínimo de recursos (**~1.5 MB – 10 MB RAM**).
 
 ---
 
@@ -20,10 +20,11 @@ Bot de control remoto, gestión de sesiones, recepción de archivos y monitor de
 ## Arquitectura modular
 
 ```text
-telegram-paulobot/
+agente-bot/
 ├── cmd/
 │   └── bot/
 │       └── main.go              # Entrypoint ligero (63 líneas) y enrutador de subcomandos CLI
+├── mobile_app/                  # App móvil Flutter (WebSocket + OTA + Avatar Rive + Voz)
 ├── internal/
 │   ├── bot/                     # Núcleo modular del bot (sin variables globales)
 │   │   ├── bot.go               # Struct App, loop de polling y recepción de fotos/archivos
@@ -47,7 +48,7 @@ telegram-paulobot/
 │   └── utils/                   # Formateo de uptime, sanitización y partición de Markdown en streaming
 ├── scripts/                     # Wrappers ligeros hacia subcomandos del binario telegram-bot
 ├── systemd/
-│   └── telegram-bot.service     # Unidad systemd de usuario (con soporte Linger 24/7)
+│   └── agent.service            # Unidad systemd de usuario (con soporte Linger 24/7)
 ├── go.mod
 └── README.md
 ```
