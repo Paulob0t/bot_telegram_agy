@@ -9,6 +9,10 @@ import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 import '../models/agent_event.dart';
 import '../services/ws_client.dart';
+import '../features/avatar3d/models/avatar3d_state.dart';
+import '../features/avatar3d/widgets/avatar3d_viewport.dart';
+import '../widgets/chat_message_bubble.dart';
+import '../widgets/obsidian_vault_sheet.dart';
 import '../widgets/rive_avatar.dart';
 
 class CompanionScreen extends StatefulWidget {
@@ -33,10 +37,74 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
   AvatarStyle _avatarStyle = AvatarStyle.cubeBot;
   AvatarAccessory _avatarAccessory = AvatarAccessory.none;
   Color? _avatarAccent;
+  Color? _avatarBoxBg;
   String? _customRivePath;
+  String? _customGlbPath;
+  String? _customPhotoPath;
+  GeminiAvatarProfile? _geminiProfile;
+  List<GeminiAvatarProfile> _geminiVariants = const [];
+  bool _isGeneratingAvatar = false;
+  final Set<String> _selectedMsgIds = {};
+  final List<String> _stagedAttachments = [];
   String _slashQuery = '';
 
+  bool get _isSelectionMode => _selectedMsgIds.isNotEmpty;
+
+  void _toggleMsgSelection(String msgId) {
+    setState(() {
+      if (_selectedMsgIds.contains(msgId)) {
+        _selectedMsgIds.remove(msgId);
+      } else {
+        _selectedMsgIds.add(msgId);
+      }
+    });
+  }
+
+  void _selectAllMessages() {
+    setState(() {
+      if (_selectedMsgIds.length == widget.client.messages.length) {
+        _selectedMsgIds.clear();
+      } else {
+        _selectedMsgIds
+          ..clear()
+          ..addAll(widget.client.messages.map((m) => m.id));
+      }
+    });
+  }
+
+  void _copySelectedMessages() {
+    final selected = widget.client.messages
+        .where((m) => _selectedMsgIds.contains(m.id) && m.text.trim().isNotEmpty)
+        .toList();
+    if (selected.isEmpty) return;
+
+    final text = selected.length == 1
+        ? selected.first.text.trim()
+        : selected
+            .map((m) => m.text.trim())
+            .join('\n\n');
+
+    Clipboard.setData(ClipboardData(text: text));
+    final count = selected.length;
+    setState(() => _selectedMsgIds.clear());
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('$count ${count == 1 ? "mensaje copiado" : "mensajes copiados"} al portapapeles'),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  void _deleteSelectedMessages() {
+    final ids = _selectedMsgIds.toList();
+    setState(() => _selectedMsgIds.clear());
+    for (final id in ids) {
+      widget.client.deleteMessage(id);
+    }
+  }
+
   static const List<(String, String)> _allSlashCommands = [
+    ('/obsidian', 'Bóveda de Obsidian y Prompts'),
     ('/scan', 'Escanear PC y proyectos'),
     ('/status', 'Estado del sistema'),
     ('/project', 'Cambiar proyecto'),
@@ -85,9 +153,30 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
         }
         final accentVal = data['avatarAccent'] as int?;
         if (accentVal != null) _avatarAccent = Color(accentVal);
+        final bgVal = data['avatarBoxBg'] as int?;
+        if (bgVal != null) _avatarBoxBg = Color(bgVal);
         final riv = data['customRivePath'] as String?;
         if (riv != null && riv.isNotEmpty && File(riv).existsSync()) {
           _customRivePath = riv;
+        }
+        final glb = data['customGlbPath'] as String?;
+        if (glb != null && glb.isNotEmpty && File(glb).existsSync()) {
+          _customGlbPath = glb;
+        }
+        final photo = data['customPhotoPath'] as String?;
+        if (photo != null && photo.isNotEmpty && File(photo).existsSync()) {
+          _customPhotoPath = photo;
+        }
+        final gem = data['geminiProfile'] as Map<String, dynamic>?;
+        if (gem != null) {
+          _geminiProfile = GeminiAvatarProfile.fromJson(gem);
+        }
+        final gemList = data['geminiVariants'] as List?;
+        if (gemList != null && gemList.isNotEmpty) {
+          _geminiVariants = gemList
+              .whereType<Map<String, dynamic>>()
+              .map(GeminiAvatarProfile.fromJson)
+              .toList();
         }
       });
     } catch (_) {}
@@ -101,9 +190,297 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
         'avatarStyle': _avatarStyle.index,
         'avatarAccessory': _avatarAccessory.index,
         'avatarAccent': _avatarAccent?.toARGB32(),
+        'avatarBoxBg': _avatarBoxBg?.toARGB32(),
         'customRivePath': _customRivePath,
+        'customGlbPath': _customGlbPath,
+        'customPhotoPath': _customPhotoPath,
+        'geminiProfile': _geminiProfile?.toJson(),
+        'geminiVariants': _geminiVariants.map((e) => e.toJson()).toList(),
       }));
     } catch (_) {}
+  }
+
+  Future<void> _generateGeminiAvatarFromPhoto(String photoPath) async {
+    if (_isGeneratingAvatar) return;
+    setState(() => _isGeneratingAvatar = true);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Diseñando 4 opciones de personaje desde tu foto…'),
+        duration: Duration(seconds: 4),
+      ),
+    );
+    final variants = await widget.client.generateAvatarVariantsFromPhoto(photoPath);
+    if (!mounted) return;
+    setState(() {
+      _isGeneratingAvatar = false;
+      if (variants.isNotEmpty) {
+        _geminiVariants = variants;
+        _geminiProfile = variants.first;
+        _customPhotoPath = null;
+        _customGlbPath = null;
+        _customRivePath = null;
+      }
+    });
+    if (variants.isNotEmpty) {
+      await _saveAvatarPrefs();
+      if (!mounted) return;
+      _openGeminiVariantPicker(variants);
+    }
+  }
+
+  void _openGeminiVariantPicker(List<GeminiAvatarProfile> variants) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF15181C),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetCtx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 18, 18, 22),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  'Elige tu versión del personaje',
+                  style: TextStyle(
+                    color: Color(0xFFE6EDF3),
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                  const Text(
+                    '4 estilos creados con los rasgos y paleta de tu foto',
+                    style: TextStyle(color: Color(0xFF8B949E), fontSize: 12),
+                  ),
+                  const SizedBox(height: 10),
+                  StatefulBuilder(
+                    builder: (ctx, setGridState) {
+                      final isFem = _geminiProfile?.isFeminine ?? variants.first.isFeminine;
+                      final activeHair = _geminiProfile?.hairStyle ?? variants.first.hairStyle;
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Row(
+                              children: [
+                                const Text(
+                                  'Rasgos:',
+                                  style: TextStyle(color: Color(0xFF8B949E), fontSize: 12),
+                                ),
+                                const SizedBox(width: 8),
+                                ChoiceChip(
+                                  label: const Text('Masculino'),
+                                  selected: !isFem,
+                                  onSelected: (_) {
+                                    setState(() {
+                                      _geminiVariants = _geminiVariants
+                                          .map((e) => e.copyWith(
+                                                genderStyle: 'masculine',
+                                                eyelashes: false,
+                                              ))
+                                          .toList();
+                                      if (_geminiProfile != null) {
+                                        _geminiProfile = _geminiProfile!.copyWith(
+                                          genderStyle: 'masculine',
+                                          eyelashes: false,
+                                        );
+                                      }
+                                    });
+                                    _saveAvatarPrefs();
+                                    setGridState(() {});
+                                  },
+                                ),
+                                const SizedBox(width: 8),
+                                ChoiceChip(
+                                  label: const Text('Femenino'),
+                                  selected: isFem,
+                                  onSelected: (_) {
+                                    setState(() {
+                                      _geminiVariants = _geminiVariants
+                                          .map((e) => e.copyWith(
+                                                genderStyle: 'feminine',
+                                                eyelashes: true,
+                                              ))
+                                          .toList();
+                                      if (_geminiProfile != null) {
+                                        _geminiProfile = _geminiProfile!.copyWith(
+                                          genderStyle: 'feminine',
+                                          eyelashes: true,
+                                        );
+                                      }
+                                    });
+                                    _saveAvatarPrefs();
+                                    setGridState(() {});
+                                  },
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Row(
+                              children: [
+                                const Text(
+                                  'Cabello:',
+                                  style: TextStyle(color: Color(0xFF8B949E), fontSize: 12),
+                                ),
+                                const SizedBox(width: 8),
+                                for (final h in const [
+                                  ('curly', 'Rizado'),
+                                  ('short', 'Lacio corto'),
+                                  ('long', 'Largo'),
+                                  ('afro', 'Afro / Rizo grande'),
+                                ])
+                                  Padding(
+                                    padding: const EdgeInsets.only(right: 6),
+                                    child: ChoiceChip(
+                                      label: Text(h.$2),
+                                      selected: activeHair == h.$1,
+                                      onSelected: (_) {
+                                        setState(() {
+                                          _geminiVariants = _geminiVariants
+                                              .map((e) => e.copyWith(hairStyle: h.$1))
+                                              .toList();
+                                          if (_geminiProfile != null) {
+                                            _geminiProfile =
+                                                _geminiProfile!.copyWith(hairStyle: h.$1);
+                                          }
+                                        });
+                                        _saveAvatarPrefs();
+                                        setGridState(() {});
+                                      },
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Row(
+                              children: [
+                                const Text(
+                                  'Fondo cuadro:',
+                                  style: TextStyle(color: Color(0xFF8B949E), fontSize: 12),
+                                ),
+                                const SizedBox(width: 8),
+                                for (final bg in const [
+                                  Color(0xFF111418),
+                                  Color(0xFF050608),
+                                  Color(0xFF1B2432),
+                                  Color(0xFF1A2821),
+                                  Color(0xFF2B1F1D),
+                                  Color(0xFF241E2E),
+                                  Color(0xFFE8DFD5),
+                                ])
+                                  GestureDetector(
+                                    onTap: () {
+                                      setState(() => _avatarBoxBg = bg);
+                                      _saveAvatarPrefs();
+                                      setGridState(() {});
+                                    },
+                                    child: Container(
+                                      margin: const EdgeInsets.only(right: 8),
+                                      width: 24,
+                                      height: 24,
+                                      decoration: BoxDecoration(
+                                        color: bg,
+                                        borderRadius: BorderRadius.circular(6),
+                                        border: Border.all(
+                                          color: (_avatarBoxBg ?? const Color(0xFF111418)) == bg
+                                              ? const Color(0xFFD97757)
+                                              : const Color(0xFF30363D),
+                                          width: (_avatarBoxBg ?? const Color(0xFF111418)) == bg ? 2 : 1,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          GridView.builder(
+                            shrinkWrap: true,
+                            physics: const NeverScrollableScrollPhysics(),
+                            itemCount: _geminiVariants.length,
+                            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: 2,
+                              mainAxisSpacing: 12,
+                              crossAxisSpacing: 12,
+                              childAspectRatio: 1.05,
+                            ),
+                            itemBuilder: (ctx, idx) {
+                              final v = _geminiVariants[idx];
+                              final isSelected = _geminiProfile?.variant == v.variant;
+                              return GestureDetector(
+                                onTap: () {
+                                  setState(() {
+                                    _geminiProfile = v;
+                                    _customPhotoPath = null;
+                                    _customGlbPath = null;
+                                    _customRivePath = null;
+                                  });
+                                  _saveAvatarPrefs();
+                                  Navigator.of(sheetCtx).pop();
+                                },
+                                child: Container(
+                                  padding: const EdgeInsets.all(10),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF0E1013),
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(
+                                      color: isSelected
+                                          ? const Color(0xFFD97757)
+                                          : const Color(0xFF262B32),
+                                      width: isSelected ? 2 : 1,
+                                    ),
+                                  ),
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Expanded(
+                                        child: Center(
+                                          child: GeminiCharacterPreview(
+                                            profile: v,
+                                            size: 86,
+                                            boxBackgroundColor: _avatarBoxBg,
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        v.vibe,
+                                        style: TextStyle(
+                                          color: isSelected
+                                              ? const Color(0xFFD97757)
+                                              : const Color(0xFFE6EDF3),
+                                          fontSize: 12.5,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   void _onTextChanged() {
@@ -143,10 +520,24 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
     super.dispose();
   }
 
-  void _handleSend() {
+  Future<void> _handleSend() async {
     final text = _inputController.text.trim();
-    if (text.isEmpty) return;
+    if (text.isEmpty && _stagedAttachments.isEmpty) return;
+
+    if (_stagedAttachments.isNotEmpty) {
+      final filesToSend = List<String>.from(_stagedAttachments);
+      setState(() => _stagedAttachments.clear());
+      _inputController.clear();
+      await widget.client.uploadAttachmentsWithPrompt(filesToSend, text);
+      return;
+    }
+
     final lower = text.toLowerCase();
+    if (lower == '/obsidian' || lower == '/prompts') {
+      _inputController.clear();
+      _openObsidianVault();
+      return;
+    }
     if (lower == '/model' || lower == '/modelo') {
       _inputController.clear();
       _openOptionPicker('/model');
@@ -165,6 +556,22 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
     if (widget.client.sendPrompt(text)) {
       _inputController.clear();
     }
+  }
+
+  Future<void> _pickImagesForPrompt() async {
+    if (!widget.client.isConnected) return;
+    final res = await FilePicker.pickFiles(
+      type: FileType.image,
+    );
+    if (res.isEmpty || !mounted) return;
+    setState(() {
+      for (final f in res) {
+        final p = f.path;
+        if (p != null && !_stagedAttachments.contains(p)) {
+          _stagedAttachments.add(p);
+        }
+      }
+    });
   }
 
   Future<void> _pickAndUploadFile() async {
@@ -198,13 +605,52 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
                 ),
               ),
               ListTile(
+                leading: const Icon(Icons.add_photo_alternate_rounded, color: Color(0xFFD97757)),
+                title: const Text('Adjuntar al mensaje para escribir texto', style: TextStyle(color: Color(0xFFE6EDF3))),
+                onTap: () {
+                  Navigator.of(ctx).pop();
+                  setState(() {
+                    if (!_stagedAttachments.contains(path)) {
+                      _stagedAttachments.add(path);
+                    }
+                  });
+                },
+              ),
+              ListTile(
                 leading: const Icon(Icons.auto_awesome, color: Color(0xFFD97757)),
-                title: const Text('Analizar con IA', style: TextStyle(color: Color(0xFFE6EDF3))),
+                title: const Text('Enviar directo para analizar con IA', style: TextStyle(color: Color(0xFFE6EDF3))),
                 onTap: () {
                   Navigator.of(ctx).pop();
                   widget.client.uploadFile(path, target: 'cache', analyzeWithAI: true);
                 },
               ),
+              if (path.toLowerCase().endsWith('.png') ||
+                  path.toLowerCase().endsWith('.jpg') ||
+                  path.toLowerCase().endsWith('.jpeg') ||
+                  path.toLowerCase().endsWith('.webp'))
+                ListTile(
+                  leading: const Icon(Icons.face_retouching_natural, color: Color(0xFFA371F7)),
+                  title: const Text('Crear personaje con Gemini (con laptop)', style: TextStyle(color: Color(0xFFE6EDF3))),
+                  onTap: () {
+                    Navigator.of(ctx).pop();
+                    _generateGeminiAvatarFromPhoto(path);
+                  },
+                ),
+              if (path.toLowerCase().endsWith('.glb') ||
+                  path.toLowerCase().endsWith('.gltf'))
+                ListTile(
+                  leading: const Icon(Icons.view_in_ar_rounded, color: Color(0xFFA371F7)),
+                  title: const Text('Activar como avatar 3D (.glb)', style: TextStyle(color: Color(0xFFE6EDF3))),
+                  onTap: () {
+                    Navigator.of(ctx).pop();
+                    setState(() {
+                      _customGlbPath = path;
+                      _customPhotoPath = null;
+                      _customRivePath = null;
+                    });
+                    _saveAvatarPrefs();
+                  },
+                ),
               ListTile(
                 leading: const Icon(Icons.folder_outlined, color: Color(0xFF58A6FF)),
                 title: const Text('Guardar en proyecto (cwd)', style: TextStyle(color: Color(0xFFE6EDF3))),
@@ -373,15 +819,28 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        SizedBox(
-                          width: 76,
-                          height: 66,
-                          child: RiveCompanionAvatar(
-                            state: state,
-                            style: _avatarStyle,
-                            accessory: _avatarAccessory,
-                            customAccent: _avatarAccent,
-                            customRivePath: _customRivePath,
+                        Avatar3DViewport(
+                          activity: widget.client.activity,
+                          size: 112,
+                          customGlbPath: _customGlbPath,
+                          customPhotoPath: _customPhotoPath,
+                          geminiProfile: _geminiProfile,
+                          boxBackgroundColor: _avatarBoxBg,
+                          onLongPress: _confirmStop,
+                          onTapIdleFallback: () => _onAvatarTap(state),
+                          fallback: Center(
+                            child: SizedBox(
+                              width: 76,
+                              height: 66,
+                              child: RiveCompanionAvatar(
+                                state: state,
+                                style: _avatarStyle,
+                                accessory: _avatarAccessory,
+                                customAccent: _avatarAccent,
+                                customBgColor: _avatarBoxBg,
+                                customRivePath: _customRivePath,
+                              ),
+                            ),
                           ),
                         ),
                         const SizedBox(height: 6),
@@ -400,7 +859,7 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
                             ),
                           ),
                         ),
-                        if (state != CharacterState.idle) ...[
+                        if (state != CharacterState.idle && widget.client.activity.label.isEmpty) ...[
                           const SizedBox(height: 5),
                           _buildStatusBubble(state),
                         ],
@@ -425,6 +884,68 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
                 ],
               ),
             ),
+
+            if (_isSelectionMode)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: const BoxDecoration(
+                  color: Color(0xFF161B22),
+                  border: Border(
+                    top: BorderSide(color: Color(0xFF262B32)),
+                    bottom: BorderSide(color: Color(0xFF262B32)),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    IconButton(
+                      visualDensity: VisualDensity.compact,
+                      tooltip: 'Cancelar selección',
+                      onPressed: () => setState(() => _selectedMsgIds.clear()),
+                      icon: const Icon(Icons.close_rounded, color: Color(0xFFE6EDF3), size: 19),
+                    ),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(
+                        '${_selectedMsgIds.length} ${_selectedMsgIds.length == 1 ? "seleccionado" : "seleccionados"}',
+                        style: const TextStyle(
+                          color: Color(0xFFE6EDF3),
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: _selectAllMessages,
+                      child: Text(
+                        _selectedMsgIds.length == widget.client.messages.length ? 'Ninguno' : 'Todos',
+                        style: const TextStyle(color: Color(0xFF8B949E), fontSize: 12),
+                      ),
+                    ),
+                    FilledButton.tonalIcon(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: const Color(0xFFD97757),
+                        foregroundColor: const Color(0xFF0D1117),
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      ),
+                      onPressed: _copySelectedMessages,
+                      icon: const Icon(Icons.copy_rounded, size: 15),
+                      label: const Text(
+                        'Copiar',
+                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    IconButton(
+                      visualDensity: VisualDensity.compact,
+                      tooltip: 'Eliminar seleccionados',
+                      onPressed: _deleteSelectedMessages,
+                      icon: const Icon(Icons.delete_outline_rounded, color: Color(0xFFF85149), size: 19),
+                    ),
+                  ],
+                ),
+              ),
 
             // Área principal del chat sin choques
             Expanded(
@@ -451,8 +972,12 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
                       itemCount: widget.client.messages.length,
                       itemBuilder: (context, index) {
                         final msg = widget.client.messages[index];
-                        return _MessageBubble(
+                        final isSelected = _selectedMsgIds.contains(msg.id);
+                        return ChatMessageBubble(
                           message: msg,
+                          selectionMode: _isSelectionMode,
+                          isSelected: isSelected,
+                          onToggleSelect: () => _toggleMsgSelection(msg.id),
                           onCopy: () {
                             Clipboard.setData(ClipboardData(text: msg.text));
                             ScaffoldMessenger.of(context).showSnackBar(
@@ -537,19 +1062,101 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
                 ),
               ),
 
+            // Barra de capturas/imágenes adjuntas listas para enviar con tu texto
+            if (_stagedAttachments.isNotEmpty)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+                decoration: const BoxDecoration(
+                  color: Color(0xFF15181C),
+                  border: Border(
+                    top: BorderSide(color: Color(0xFF21262D)),
+                  ),
+                ),
+                child: SizedBox(
+                  height: 62,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: _stagedAttachments.length,
+                    separatorBuilder: (_, __) => const SizedBox(width: 10),
+                    itemBuilder: (ctx, idx) {
+                      final path = _stagedAttachments[idx];
+                      final isImg = path.toLowerCase().endsWith('.png') ||
+                          path.toLowerCase().endsWith('.jpg') ||
+                          path.toLowerCase().endsWith('.jpeg') ||
+                          path.toLowerCase().endsWith('.webp');
+                      return Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          Container(
+                            width: 58,
+                            height: 58,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF0D1117),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: const Color(0xFFD97757)),
+                            ),
+                            clipBehavior: Clip.antiAlias,
+                            child: isImg && File(path).existsSync()
+                                ? Image.file(File(path), fit: BoxFit.cover)
+                                : Center(
+                                    child: Text(
+                                      path.split('/').last,
+                                      maxLines: 2,
+                                      textAlign: TextAlign.center,
+                                      style: const TextStyle(
+                                        color: Color(0xFFE6EDF3),
+                                        fontSize: 9,
+                                      ),
+                                    ),
+                                  ),
+                          ),
+                          Positioned(
+                            top: -5,
+                            right: -5,
+                            child: GestureDetector(
+                              onTap: () => setState(() => _stagedAttachments.removeAt(idx)),
+                              child: Container(
+                                padding: const EdgeInsets.all(2),
+                                decoration: const BoxDecoration(
+                                  color: Color(0xFF21262D),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(
+                                  Icons.close_rounded,
+                                  size: 13,
+                                  color: Color(0xFFE6EDF3),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                ),
+              ),
+
             // Barra de entrada
             Container(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-              decoration: const BoxDecoration(
-                color: Color(0xFF15181C),
-                border: Border(
-                  top: BorderSide(color: Color(0xFF21262D)),
-                ),
+              padding: const EdgeInsets.fromLTRB(8, 8, 12, 12),
+              decoration: BoxDecoration(
+                color: const Color(0xFF15181C),
+                border: _stagedAttachments.isEmpty
+                    ? const Border(top: BorderSide(color: Color(0xFF21262D)))
+                    : null,
               ),
               child: Row(
                 children: [
                   IconButton(
-                    tooltip: 'Adjuntar foto o PDF',
+                    visualDensity: VisualDensity.compact,
+                    tooltip: 'Agregar captura o imagen al mensaje',
+                    onPressed: widget.client.isConnected ? _pickImagesForPrompt : null,
+                    icon: const Icon(Icons.image_outlined, color: Color(0xFFD97757), size: 20),
+                  ),
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    tooltip: 'Más opciones de archivo o PDF',
                     onPressed: widget.client.isConnected ? _pickAndUploadFile : null,
                     icon: const Icon(Icons.attach_file, color: Color(0xFF8B949E), size: 20),
                   ),
@@ -622,6 +1229,21 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
       ),
     );
   }
+  Future<void> _confirmStop() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('¿Detener la tarea?'),
+        content: const Text('Se mata el proceso del agente en tu PC (/stop).'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Detener')),
+        ],
+      ),
+    );
+    if (ok == true) widget.client.stopExecution();
+  }
+
   void _onAvatarTap(CharacterState state) {
     if (state == CharacterState.thinking || state == CharacterState.speaking) {
       widget.client.stopExecution();
@@ -844,8 +1466,24 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
     );
   }
 
+  void _openObsidianVault() {
+    ObsidianVaultSheet.show(
+      context,
+      client: widget.client,
+      onInsertIntoInput: (text) {
+        setState(() {
+          _inputController.text = text;
+          _inputController.selection = TextSelection.fromPosition(
+            TextPosition(offset: _inputController.text.length),
+          );
+        });
+      },
+    );
+  }
+
   Widget _buildCommandsDrawer() {
     final commands = [
+      (Icons.menu_book_rounded, 'Obsidian · Prompts', '/obsidian'),
       (Icons.radar, 'Escanear PC y proyectos', '/scan'),
       (Icons.info_outline, 'Estado del sistema', '/status'),
       (Icons.folder_outlined, 'Cambiar proyecto', '/project'),
@@ -903,6 +1541,8 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
                         Navigator.of(context).pop();
                         if (item.$3 == '/stop') {
                           widget.client.stopExecution();
+                        } else if (item.$3 == '/obsidian') {
+                          _openObsidianVault();
                         } else if (item.$3 == '/model' ||
                             item.$3 == '/project' ||
                             item.$3 == '/resume') {
@@ -1089,11 +1729,18 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
                   for (final s in AvatarStyle.values)
                     ChoiceChip(
                       label: Text(s.name),
-                      selected: _avatarStyle == s && _customRivePath == null,
+                      selected: _avatarStyle == s &&
+                          _customRivePath == null &&
+                          _customPhotoPath == null &&
+                          _customGlbPath == null &&
+                          _geminiProfile == null,
                       onSelected: (_) {
                         setState(() {
                           _avatarStyle = s;
                           _customRivePath = null;
+                          _customPhotoPath = null;
+                          _customGlbPath = null;
+                          _geminiProfile = null;
                         });
                         _saveAvatarPrefs();
                         setSheetState(() {});
@@ -1120,7 +1767,7 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
                 ],
               ),
               const SizedBox(height: 12),
-              const Text('Color', style: TextStyle(color: Color(0xFF8B949E), fontSize: 12)),
+              const Text('Color de acento', style: TextStyle(color: Color(0xFF8B949E), fontSize: 12)),
               const SizedBox(height: 6),
               Row(
                 children: [
@@ -1147,124 +1794,114 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
                     ),
                 ],
               ),
+              const SizedBox(height: 12),
+              const Text('Fondo del cuadro', style: TextStyle(color: Color(0xFF8B949E), fontSize: 12)),
+              const SizedBox(height: 6),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    for (final bg in const [
+                      Color(0xFF111418),
+                      Color(0xFF050608),
+                      Color(0xFF1B2432),
+                      Color(0xFF1A2821),
+                      Color(0xFF2B1F1D),
+                      Color(0xFF241E2E),
+                      Color(0xFFE8DFD5),
+                    ])
+                      GestureDetector(
+                        onTap: () {
+                          setState(() => _avatarBoxBg = bg);
+                          _saveAvatarPrefs();
+                          setSheetState(() {});
+                        },
+                        child: Container(
+                          margin: const EdgeInsets.only(right: 10),
+                          width: 28,
+                          height: 28,
+                          decoration: BoxDecoration(
+                            color: bg,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: (_avatarBoxBg ?? const Color(0xFF111418)) == bg
+                                  ? const Color(0xFFD97757)
+                                  : const Color(0xFF30363D),
+                              width: (_avatarBoxBg ?? const Color(0xFF111418)) == bg ? 2 : 1,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
               const SizedBox(height: 14),
+              FilledButton.tonalIcon(
+                onPressed: _isGeneratingAvatar
+                    ? null
+                    : () async {
+                        final picked = await FilePicker.pickFiles(type: FileType.image);
+                        if (picked.isEmpty) return;
+                        final path = picked.first.path;
+                        if (path == null) return;
+                        if (sheetCtx.mounted) Navigator.of(sheetCtx).pop();
+                        await _generateGeminiAvatarFromPhoto(path);
+                      },
+                icon: const Icon(Icons.auto_awesome_rounded, size: 18),
+                label: Text(
+                  _geminiProfile != null
+                      ? 'Subir otra foto para crear 4 opciones'
+                      : 'Crear personaje desde tu foto (4 opciones)',
+                ),
+              ),
+              if (_geminiVariants.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  onPressed: () {
+                    Navigator.of(sheetCtx).pop();
+                    _openGeminiVariantPicker(_geminiVariants);
+                  },
+                  icon: const Icon(Icons.grid_view_rounded, size: 18),
+                  label: Text('Cambiar entre mis 4 opciones (${_geminiProfile?.vibe ?? "Plush"})'),
+                ),
+              ],
+              const SizedBox(height: 8),
               OutlinedButton.icon(
                 onPressed: () async {
                   final picked = await FilePicker.pickFiles(type: FileType.any);
                   if (picked.isEmpty) return;
                   final path = picked.first.path;
-                  if (path == null || !path.toLowerCase().endsWith('.riv')) return;
-                  setState(() => _customRivePath = path);
+                  if (path == null) return;
+                  final lower = path.toLowerCase();
+                  if (lower.endsWith('.glb') || lower.endsWith('.gltf')) {
+                    setState(() {
+                      _customGlbPath = path;
+                      _customPhotoPath = null;
+                      _customRivePath = null;
+                    });
+                  } else if (lower.endsWith('.riv')) {
+                    setState(() {
+                      _customRivePath = path;
+                      _customGlbPath = null;
+                      _customPhotoPath = null;
+                    });
+                  } else {
+                    return;
+                  }
                   _saveAvatarPrefs();
                   if (sheetCtx.mounted) Navigator.of(sheetCtx).pop();
                 },
-                icon: const Icon(Icons.upload_file, size: 18),
+                icon: const Icon(Icons.view_in_ar_rounded, size: 18),
                 label: Text(
-                  _customRivePath != null
-                      ? 'Rive activo: ${_customRivePath!.split('/').last}'
-                      : 'Importar animación .riv',
+                  _customGlbPath != null
+                      ? 'Modelo 3D activo: ${_customGlbPath!.split('/').last}'
+                      : (_customRivePath != null
+                          ? 'Rive activo: ${_customRivePath!.split('/').last}'
+                          : 'Importar modelo 3D (.glb) o animación (.riv)'),
                 ),
               ),
             ],
           ),
-        ),
-      ),
-    );
-  }
-}
-
-class _MessageBubble extends StatelessWidget {
-  final ChatMessage message;
-  final VoidCallback? onCopy;
-  final VoidCallback? onDelete;
-
-  const _MessageBubble({
-    required this.message,
-    this.onCopy,
-    this.onDelete,
-  });
-
-  void _showActions(BuildContext context) {
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: const Color(0xFF1A1D21),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
-      ),
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (message.text.isNotEmpty)
-              ListTile(
-                leading: const Icon(Icons.copy, color: Color(0xFF58A6FF)),
-                title: const Text('Copiar texto', style: TextStyle(color: Color(0xFFE6EDF3))),
-                onTap: () {
-                  Navigator.of(ctx).pop();
-                  onCopy?.call();
-                },
-              ),
-            ListTile(
-              leading: const Icon(Icons.delete_outline, color: Color(0xFFF85149)),
-              title: const Text('Eliminar mensaje', style: TextStyle(color: Color(0xFFF85149))),
-              onTap: () {
-                Navigator.of(ctx).pop();
-                onDelete?.call();
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final bgColor = message.isUser
-        ? const Color(0xFF21262D)
-        : (message.isError ? const Color(0xFF2D1619) : const Color(0xFF161B22));
-    final borderColor = message.isUser
-        ? const Color(0xFF30363D)
-        : (message.isError ? const Color(0xFFF85149) : const Color(0xFF21262D));
-
-    return Align(
-      alignment: message.isUser ? Alignment.centerRight : Alignment.centerLeft,
-      child: GestureDetector(
-        onLongPress: () => _showActions(context),
-        child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 5),
-        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
-        constraints: const BoxConstraints(maxWidth: 340),
-        decoration: BoxDecoration(
-          color: bgColor,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: borderColor),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (message.text.isNotEmpty)
-              SelectableText(
-                message.text,
-                style: const TextStyle(
-                  color: Color(0xFFE6EDF3),
-                  fontSize: 13.5,
-                  height: 1.4,
-                ),
-              ),
-            if (message.toolStatus.isNotEmpty) ...[
-              if (message.text.isNotEmpty) const SizedBox(height: 6),
-              Text(
-                message.toolStatus,
-                style: const TextStyle(
-                  color: Color(0xFFD29922),
-                  fontSize: 12,
-                  fontFamily: 'monospace',
-                ),
-              ),
-            ],
-          ],
-        ),
         ),
       ),
     );

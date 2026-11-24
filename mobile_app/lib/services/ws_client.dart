@@ -7,10 +7,12 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
+import '../features/avatar3d/models/avatar3d_state.dart';
 import '../models/agent_event.dart';
 import 'notifications.dart';
 
-const int currentAppBuildNumber = 23;
+const int currentAppBuildNumber = int.fromEnvironment('APP_BUILD', defaultValue: 24);
+const String _ntfyTunnelTopic = 'hypragent-paulobot-tunnel';
 
 /// Cliente WebSocket resiliente con reconexión exponencial y sincronización
 /// directa con la State Machine de Rive (`idle`, `listening`, `thinking`, `speaking`, `sleeping`).
@@ -62,6 +64,9 @@ class AgyWsClient extends ChangeNotifier {
   bool get isConnecting => _isConnecting;
   int get retryAttempt => _retryAttempt;
   CharacterState get characterState => _characterState;
+
+  AgentActivity _activity = AgentActivity.idle;
+  AgentActivity get activity => _activity;
   List<ChatMessage> get messages => List.unmodifiable(_messages);
   List<ChatMessage> get notifications => List.unmodifiable(_notifications);
   int get unreadNotifications => _unreadNotifications;
@@ -85,6 +90,32 @@ class AgyWsClient extends ChangeNotifier {
     await connect();
   }
 
+  Future<String?> _fetchNtfyTunnelUrl() async {
+    try {
+      final client = HttpClient()..connectionTimeout = const Duration(seconds: 4);
+      final req = await client.getUrl(
+        Uri.parse('https://ntfy.sh/$_ntfyTunnelTopic/json?poll=1&since=24h'),
+      );
+      final res = await req.close().timeout(const Duration(seconds: 4));
+      if (res.statusCode != 200) return null;
+      final body = await res.transform(utf8.decoder).join();
+      String? latest;
+      for (final line in const LineSplitter().convert(body)) {
+        if (line.trim().isEmpty) continue;
+        final data = jsonDecode(line);
+        if (data is Map && data['message'] is String) {
+          final msg = (data['message'] as String).trim();
+          if (msg.startsWith('wss://') && msg.contains('trycloudflare.com')) {
+            latest = msg;
+          }
+        }
+      }
+      return latest;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Conecta al servidor Go en Tailscale. Si la PC está suspendida o apagada,
   /// pasa automáticamente a [CharacterState.sleeping] y programa reconexión exponencial.
   Future<void> connect() async {
@@ -105,12 +136,23 @@ class AgyWsClient extends ChangeNotifier {
       } catch (_) {
         // Si Tailscale no está encendido en el cel pero está por USB (adb reverse), probar 127.0.0.1
         if (!_wsUrl.contains('127.0.0.1') && !_wsUrl.contains('localhost')) {
-          ws = await WebSocket.connect(
-            'ws://127.0.0.1:8080/ws',
-            headers: {
-              'Authorization': 'Bearer $_bearerToken',
-            },
-          ).timeout(const Duration(seconds: 2));
+          try {
+            ws = await WebSocket.connect(
+              'ws://127.0.0.1:8080/ws',
+              headers: {
+                'Authorization': 'Bearer $_bearerToken',
+              },
+            ).timeout(const Duration(seconds: 2));
+          } catch (_) {
+            final tunnelUrl = await _fetchNtfyTunnelUrl();
+            if (tunnelUrl == null) rethrow;
+            ws = await WebSocket.connect(
+              tunnelUrl,
+              headers: {
+                'Authorization': 'Bearer $_bearerToken',
+              },
+            ).timeout(connectTimeout);
+          }
         } else {
           rethrow;
         }
@@ -226,6 +268,51 @@ class AgyWsClient extends ChangeNotifier {
     } catch (_) {}
   }
 
+  /// Sube múltiples fotos/capturas al servidor Go y envía un solo prompt con todas las rutas adjuntas.
+  Future<bool> uploadAttachmentsWithPrompt(
+    List<String> filePaths,
+    String promptText,
+  ) async {
+    if (filePaths.isEmpty) {
+      return sendPrompt(promptText);
+    }
+    try {
+      final wsUri = Uri.parse(_wsUrl);
+      final scheme = wsUri.scheme == 'wss' ? 'https' : 'http';
+      final uploadUri = wsUri.replace(scheme: scheme, path: '/upload');
+
+      final savedPaths = <String>[];
+      for (final filePath in filePaths) {
+        final req = http.MultipartRequest('POST', uploadUri);
+        req.headers['Authorization'] = 'Bearer $_bearerToken';
+        req.fields['target'] = 'cache';
+        req.files.add(await http.MultipartFile.fromPath('file', filePath));
+
+        final streamed = await req.send().timeout(const Duration(seconds: 30));
+        final body = await streamed.stream.bytesToString();
+        if (streamed.statusCode >= 400) {
+          _lastError = 'Error subiendo captura (${streamed.statusCode})';
+          notifyListeners();
+          return false;
+        }
+        final decoded = jsonDecode(body) as Map<String, dynamic>;
+        savedPaths.add(decoded['path'] as String? ?? filePath);
+      }
+
+      final header = savedPaths
+          .map((p) => '[Imagen adjunta guardada en: $p]')
+          .join('\n');
+      final instr = promptText.trim().isNotEmpty
+          ? promptText.trim()
+          : 'Por favor analiza esta imagen.';
+      return sendPrompt('$header\n\n$instr');
+    } catch (err) {
+      _lastError = err.toString();
+      notifyListeners();
+      return false;
+    }
+  }
+
   /// Sube una foto, PDF o archivo al servidor Go (`POST /upload`) y opcionalmente lo analiza con IA.
   Future<bool> uploadFile(
     String filePath, {
@@ -265,7 +352,7 @@ class AgyWsClient extends ChangeNotifier {
         ChatMessage(
           id: 'up_${DateTime.now().microsecondsSinceEpoch}',
           isUser: false,
-          text: '✅ Archivo `$fileName` guardado en:\n`$savedPath`',
+          text: 'Archivo `$fileName` guardado en:\n`$savedPath`',
           timestamp: DateTime.now(),
         ),
       );
@@ -275,6 +362,45 @@ class AgyWsClient extends ChangeNotifier {
       _lastError = err.toString();
       notifyListeners();
       return false;
+    }
+  }
+
+  /// Envía una foto a `POST /avatar/from-photo` para que Gemini Vision extraiga
+  /// los rasgos y devuelva 4 variantes del personaje animado con mini-laptop.
+  Future<List<GeminiAvatarProfile>> generateAvatarVariantsFromPhoto(String filePath) async {
+    try {
+      final wsUri = Uri.parse(_wsUrl);
+      final scheme = wsUri.scheme == 'wss' ? 'https' : 'http';
+      final uri = wsUri.replace(scheme: scheme, path: '/avatar/from-photo');
+
+      final req = http.MultipartRequest('POST', uri);
+      req.headers['Authorization'] = 'Bearer $_bearerToken';
+      req.files.add(await http.MultipartFile.fromPath('file', filePath));
+
+      final streamed = await req.send().timeout(const Duration(seconds: 40));
+      final body = await streamed.stream.bytesToString();
+      if (streamed.statusCode >= 400) {
+        _lastError = 'Error generando personaje (${streamed.statusCode})';
+        notifyListeners();
+        return const [];
+      }
+      final decoded = jsonDecode(body) as Map<String, dynamic>;
+      final rawList = decoded['variants'] as List?;
+      if (rawList != null && rawList.isNotEmpty) {
+        return rawList
+            .whereType<Map<String, dynamic>>()
+            .map(GeminiAvatarProfile.fromJson)
+            .toList();
+      }
+      final traits = decoded['traits'] as Map<String, dynamic>?;
+      if (traits != null) {
+        return [GeminiAvatarProfile.fromJson(traits)];
+      }
+      return const [];
+    } catch (err) {
+      _lastError = 'Error generando personaje con Gemini: $err';
+      notifyListeners();
+      return const [];
     }
   }
 
@@ -326,6 +452,13 @@ class AgyWsClient extends ChangeNotifier {
           );
           _activeStreamingMsgId = null;
           _setCharacterState(CharacterState.idle);
+          break;
+
+        case AgentEventType.agentStatus:
+          if (ev.activity != null) {
+            _activity = ev.activity!;
+            notifyListeners();
+          }
           break;
 
         case AgentEventType.unknown:
@@ -489,6 +622,27 @@ class AgyWsClient extends ChangeNotifier {
     return null;
   }
 
+  /// Navega la bóveda de Obsidian (`GET /obsidian?path=...`) con 0 tokens.
+  /// Devuelve la lista de carpetas/archivos o el contenido del `.md`.
+  Future<Map<String, dynamic>?> fetchObsidian({String relPath = ''}) async {
+    try {
+      final wsUri = Uri.parse(_wsUrl);
+      final scheme = wsUri.scheme == 'wss' ? 'https' : 'http';
+      final obsUri = wsUri.replace(
+        scheme: scheme,
+        path: '/obsidian',
+        queryParameters: relPath.isEmpty ? null : {'path': relPath},
+      );
+      final res = await http
+          .get(obsUri, headers: {'Authorization': 'Bearer $_bearerToken'})
+          .timeout(const Duration(seconds: 6));
+      if (res.statusCode == 200) {
+        return jsonDecode(res.body) as Map<String, dynamic>;
+      }
+    } catch (_) {}
+    return null;
+  }
+
   Future<void> _checkAndInstallUpdate() async {
     try {
       final wsUri = Uri.parse(_wsUrl);
@@ -568,6 +722,11 @@ class AgyWsClient extends ChangeNotifier {
   }
 
   void _setCharacterState(CharacterState next) {
+    if (next == CharacterState.sleeping) {
+      _activity = const AgentActivity(state: Avatar3DState.error, label: 'Reconectando · buscando túnel');
+    } else if (_activity.state == Avatar3DState.error && _activity.label.startsWith('Reconectando')) {
+      _activity = AgentActivity.idle;
+    }
     if (_characterState != next) {
       _characterState = next;
     }

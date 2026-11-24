@@ -22,20 +22,50 @@ class LocalNotifier {
     }
   }
 
+  /// Strips raw Markdown (`**`, `*`, `` ` ``, `[label](url)`, headings) so system
+  /// push notifications read cleanly without syntax noise.
+  static String cleanNotificationText(String raw) {
+    var s = raw;
+    s = s.replaceAllMapped(
+      RegExp(r'\[([^\]]+)\]\([^\)]+\)'),
+      (m) => m.group(1) ?? '',
+    );
+    s = s.replaceAll('**', '');
+    s = s.replaceAll('`', '');
+    s = s.replaceAll(RegExp(r'^#{1,4}\s+', multiLine: true), '');
+    s = s.replaceAll(RegExp(r'^\s*[-*]\s+', multiLine: true), '• ');
+    s = s.replaceAllMapped(
+      RegExp(r'(?<!\w)\*([^\*\n]+)\*(?!\w)'),
+      (m) => m.group(1) ?? '',
+    );
+    return s.trim();
+  }
+
   static Future<void> show(String title, String body) async {
     if (!_initialized) return;
     try {
-      const androidDetails = AndroidNotificationDetails(
+      final cleanTitle = cleanNotificationText(title);
+      final cleanFull = cleanNotificationText(body);
+      final expandedText =
+          cleanFull.length > 700 ? '${cleanFull.substring(0, 700)}…' : cleanFull;
+      final collapsedText =
+          cleanFull.length > 140 ? '${cleanFull.substring(0, 140)}…' : cleanFull;
+
+      final androidDetails = AndroidNotificationDetails(
         'paulobot_tasks',
         'Tareas AGY y Claude',
         channelDescription: 'Notificaciones cuando termina una tarea en tu PC',
         icon: '@drawable/ic_notification',
         importance: Importance.high,
         priority: Priority.high,
+        styleInformation: BigTextStyleInformation(
+          expandedText,
+          contentTitle: cleanTitle,
+          summaryText: 'HyprAgent',
+        ),
       );
-      const details = NotificationDetails(android: androidDetails);
-      final cleanBody = body.length > 240 ? '${body.substring(0, 240)}…' : body;
-      await _plugin.show(_seq++, title, cleanBody, details);
+      final details = NotificationDetails(android: androidDetails);
+      await _plugin.show(_seq++, cleanTitle, collapsedText, details);
     } catch (_) {}
   }
 }

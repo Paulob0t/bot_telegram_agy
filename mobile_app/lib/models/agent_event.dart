@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import '../features/avatar3d/models/avatar3d_state.dart';
+
 /// Estados de la State Machine de Rive.
 /// Cuando la PC está apagada, suspendida o sin red Tailscale, pasa a [sleeping].
 enum CharacterState {
@@ -26,7 +28,7 @@ enum CharacterState {
   }
 }
 
-enum AgentEventType { state, chunk, notify, error, unknown }
+enum AgentEventType { state, chunk, notify, error, agentStatus, unknown }
 
 /// Evento recibido desde el servidor Go sobre WebSocket.
 class AgentEvent {
@@ -37,8 +39,10 @@ class AgentEvent {
   final String toolStatus;
   final bool done;
   final String message;
+  final AgentActivity? activity;
 
   const AgentEvent({
+    this.activity,
     required this.type,
     this.state,
     this.title = '',
@@ -69,6 +73,11 @@ class AgentEvent {
           title: json['title'] as String? ?? 'HyprAgent',
           text: json['text'] as String? ?? '',
           done: true,
+        );
+      case 'agent_status':
+        return AgentEvent(
+          type: AgentEventType.agentStatus,
+          activity: AgentActivity.fromJson(json),
         );
       case 'error':
         return AgentEvent(
