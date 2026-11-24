@@ -18,6 +18,7 @@ class RiveCompanionAvatar extends StatefulWidget {
   final AvatarStyle style;
   final AvatarAccessory accessory;
   final Color? customAccent;
+  final Color? customBgColor;
   final String? customRivePath;
 
   const RiveCompanionAvatar({
@@ -28,6 +29,7 @@ class RiveCompanionAvatar extends StatefulWidget {
     this.style = AvatarStyle.cubeBot,
     this.accessory = AvatarAccessory.none,
     this.customAccent,
+    this.customBgColor,
     this.customRivePath,
   });
 
@@ -144,6 +146,7 @@ class _RiveCompanionAvatarState extends State<RiveCompanionAvatar>
             style: widget.style,
             accessory: widget.accessory,
             customAccent: widget.customAccent,
+            customBgColor: widget.customBgColor,
           ),
         );
       },
@@ -157,6 +160,7 @@ class _ProceduralCharacterPainter extends CustomPainter {
   final AvatarStyle style;
   final AvatarAccessory accessory;
   final Color? customAccent;
+  final Color? customBgColor;
 
   const _ProceduralCharacterPainter({
     required this.state,
@@ -164,6 +168,7 @@ class _ProceduralCharacterPainter extends CustomPainter {
     required this.style,
     required this.accessory,
     this.customAccent,
+    this.customBgColor,
   });
 
   @override
@@ -201,7 +206,7 @@ class _ProceduralCharacterPainter extends CustomPainter {
     }
 
     final shellPaint = Paint()
-      ..color = const Color(0xFF15181C)
+      ..color = customBgColor ?? const Color(0xFF15181C)
       ..style = PaintingStyle.fill;
     final borderPaint = Paint()
       ..color = accentColor.withValues(alpha: 0.85)
@@ -350,6 +355,7 @@ class _ProceduralCharacterPainter extends CustomPainter {
         oldDelegate.phase != phase ||
         oldDelegate.style != style ||
         oldDelegate.accessory != accessory ||
-        oldDelegate.customAccent != customAccent;
+        oldDelegate.customAccent != customAccent ||
+        oldDelegate.customBgColor != customBgColor;
   }
 }
