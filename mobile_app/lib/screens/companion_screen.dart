@@ -1,17 +1,21 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 import '../models/agent_event.dart';
-import '../services/hub_credentials_store.dart';
 import '../services/ws_client.dart';
+import '../features/avatar3d/controllers/avatar_prefs_controller.dart';
+import '../features/avatar3d/widgets/avatar_customizer_sheet.dart';
+import '../features/chat/file_actions_sheet.dart';
+import '../features/notifications/notifications_sheet.dart';
+import '../features/sessions/option_picker_sheet.dart';
+import '../features/settings/connection_settings_sheet.dart';
 import '../widgets/permission_request_card.dart';
+import '../widgets/status_bubble.dart';
 import '../features/avatar3d/models/avatar3d_state.dart';
 import '../features/avatar3d/widgets/avatar3d_viewport.dart';
 import '../widgets/chat_message_bubble.dart';
@@ -39,16 +43,7 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
   final stt.SpeechToText _speech = stt.SpeechToText();
   bool _isListeningVoice = false;
   int _lastMsgCount = 0;
-  String _assistantName = 'HyprAgent';
-  AvatarStyle _avatarStyle = AvatarStyle.cubeBot;
-  AvatarAccessory _avatarAccessory = AvatarAccessory.none;
-  Color? _avatarAccent;
-  Color? _avatarBoxBg;
-  String? _customRivePath;
-  String? _customPhotoPath;
-  GeminiAvatarProfile? _geminiProfile;
-  List<GeminiAvatarProfile> _geminiVariants = const [];
-  bool _isGeneratingAvatar = false;
+  final AvatarPrefsController _prefs = AvatarPrefsController();
   final Set<String> _selectedMsgIds = {};
   final List<String> _stagedAttachments = [];
   String _slashQuery = '';
@@ -125,7 +120,8 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
     WidgetsBinding.instance.addObserver(this);
     widget.client.addListener(_onClientUpdated);
     _inputController.addListener(_onTextChanged);
-    _loadAvatarPrefs();
+    _prefs.addListener(_onClientUpdated);
+    _prefs.load();
   }
 
   bool _setupPrompted = false;
@@ -133,353 +129,6 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     widget.client.isAppInForeground = state == AppLifecycleState.resumed;
-  }
-
-  Future<File> _prefsFile() async {
-    final dir = await getApplicationDocumentsDirectory();
-    return File('${dir.path}/companion_prefs.json');
-  }
-
-  Future<void> _loadAvatarPrefs() async {
-    try {
-      final file = await _prefsFile();
-      if (!await file.exists()) return;
-      final data = jsonDecode(await file.readAsString()) as Map<String, dynamic>;
-      if (!mounted) return;
-      setState(() {
-        final name = data['assistantName'] as String?;
-        if (name != null && name.isNotEmpty) _assistantName = name;
-        final styleIdx = data['avatarStyle'] as int?;
-        if (styleIdx != null && styleIdx >= 0 && styleIdx < AvatarStyle.values.length) {
-          _avatarStyle = AvatarStyle.values[styleIdx];
-        }
-        final accIdx = data['avatarAccessory'] as int?;
-        if (accIdx != null && accIdx >= 0 && accIdx < AvatarAccessory.values.length) {
-          _avatarAccessory = AvatarAccessory.values[accIdx];
-        }
-        final accentVal = data['avatarAccent'] as int?;
-        if (accentVal != null) _avatarAccent = Color(accentVal);
-        final bgVal = data['avatarBoxBg'] as int?;
-        if (bgVal != null) _avatarBoxBg = Color(bgVal);
-        final riv = data['customRivePath'] as String?;
-        if (riv != null && riv.isNotEmpty && File(riv).existsSync()) {
-          _customRivePath = riv;
-        }
-        final photo = data['customPhotoPath'] as String?;
-        if (photo != null && photo.isNotEmpty && File(photo).existsSync()) {
-          _customPhotoPath = photo;
-        }
-        final gem = data['geminiProfile'] as Map<String, dynamic>?;
-        if (gem != null) {
-          _geminiProfile = GeminiAvatarProfile.fromJson(gem);
-        }
-        final gemList = data['geminiVariants'] as List?;
-        if (gemList != null && gemList.isNotEmpty) {
-          _geminiVariants = gemList
-              .whereType<Map<String, dynamic>>()
-              .map(GeminiAvatarProfile.fromJson)
-              .toList();
-        }
-      });
-    } catch (_) {}
-  }
-
-  Future<void> _saveAvatarPrefs() async {
-    try {
-      final file = await _prefsFile();
-      await file.writeAsString(jsonEncode({
-        'assistantName': _assistantName,
-        'avatarStyle': _avatarStyle.index,
-        'avatarAccessory': _avatarAccessory.index,
-        'avatarAccent': _avatarAccent?.toARGB32(),
-        'avatarBoxBg': _avatarBoxBg?.toARGB32(),
-        'customRivePath': _customRivePath,
-        'customPhotoPath': _customPhotoPath,
-        'geminiProfile': _geminiProfile?.toJson(),
-        'geminiVariants': _geminiVariants.map((e) => e.toJson()).toList(),
-      }));
-    } catch (_) {}
-  }
-
-  Future<void> _generateGeminiAvatarFromPhoto(String photoPath) async {
-    if (_isGeneratingAvatar) return;
-    setState(() => _isGeneratingAvatar = true);
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Diseñando 4 opciones de personaje desde tu foto…'),
-        duration: Duration(seconds: 4),
-      ),
-    );
-    final variants = await widget.client.generateAvatarVariantsFromPhoto(photoPath);
-    if (!mounted) return;
-    setState(() {
-      _isGeneratingAvatar = false;
-      if (variants.isNotEmpty) {
-        _geminiVariants = variants;
-        _geminiProfile = variants.first;
-        _customPhotoPath = null;
-        _customRivePath = null;
-      }
-    });
-    if (variants.isNotEmpty) {
-      await _saveAvatarPrefs();
-      if (!mounted) return;
-      _openGeminiVariantPicker(variants);
-    }
-  }
-
-  void _openGeminiVariantPicker(List<GeminiAvatarProfile> variants) {
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: const Color(0xFF15181C),
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (sheetCtx) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(18, 18, 18, 22),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const Text(
-                  'Elige tu versión del personaje',
-                  style: TextStyle(
-                    color: Color(0xFFE6EDF3),
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                  const Text(
-                    '4 estilos creados con los rasgos y paleta de tu foto',
-                    style: TextStyle(color: Color(0xFF8B949E), fontSize: 12),
-                  ),
-                  const SizedBox(height: 10),
-                  StatefulBuilder(
-                    builder: (ctx, setGridState) {
-                      final isFem = _geminiProfile?.isFeminine ?? variants.first.isFeminine;
-                      final activeHair = _geminiProfile?.hairStyle ?? variants.first.hairStyle;
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          SingleChildScrollView(
-                            scrollDirection: Axis.horizontal,
-                            child: Row(
-                              children: [
-                                const Text(
-                                  'Rasgos:',
-                                  style: TextStyle(color: Color(0xFF8B949E), fontSize: 12),
-                                ),
-                                const SizedBox(width: 8),
-                                ChoiceChip(
-                                  label: const Text('Masculino'),
-                                  selected: !isFem,
-                                  onSelected: (_) {
-                                    setState(() {
-                                      _geminiVariants = _geminiVariants
-                                          .map((e) => e.copyWith(
-                                                genderStyle: 'masculine',
-                                                eyelashes: false,
-                                              ))
-                                          .toList();
-                                      if (_geminiProfile != null) {
-                                        _geminiProfile = _geminiProfile!.copyWith(
-                                          genderStyle: 'masculine',
-                                          eyelashes: false,
-                                        );
-                                      }
-                                    });
-                                    _saveAvatarPrefs();
-                                    setGridState(() {});
-                                  },
-                                ),
-                                const SizedBox(width: 8),
-                                ChoiceChip(
-                                  label: const Text('Femenino'),
-                                  selected: isFem,
-                                  onSelected: (_) {
-                                    setState(() {
-                                      _geminiVariants = _geminiVariants
-                                          .map((e) => e.copyWith(
-                                                genderStyle: 'feminine',
-                                                eyelashes: true,
-                                              ))
-                                          .toList();
-                                      if (_geminiProfile != null) {
-                                        _geminiProfile = _geminiProfile!.copyWith(
-                                          genderStyle: 'feminine',
-                                          eyelashes: true,
-                                        );
-                                      }
-                                    });
-                                    _saveAvatarPrefs();
-                                    setGridState(() {});
-                                  },
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 6),
-                          SingleChildScrollView(
-                            scrollDirection: Axis.horizontal,
-                            child: Row(
-                              children: [
-                                const Text(
-                                  'Cabello:',
-                                  style: TextStyle(color: Color(0xFF8B949E), fontSize: 12),
-                                ),
-                                const SizedBox(width: 8),
-                                for (final h in const [
-                                  ('curly', 'Rizado'),
-                                  ('short', 'Lacio corto'),
-                                  ('long', 'Largo'),
-                                  ('afro', 'Afro / Rizo grande'),
-                                ])
-                                  Padding(
-                                    padding: const EdgeInsets.only(right: 6),
-                                    child: ChoiceChip(
-                                      label: Text(h.$2),
-                                      selected: activeHair == h.$1,
-                                      onSelected: (_) {
-                                        setState(() {
-                                          _geminiVariants = _geminiVariants
-                                              .map((e) => e.copyWith(hairStyle: h.$1))
-                                              .toList();
-                                          if (_geminiProfile != null) {
-                                            _geminiProfile =
-                                                _geminiProfile!.copyWith(hairStyle: h.$1);
-                                          }
-                                        });
-                                        _saveAvatarPrefs();
-                                        setGridState(() {});
-                                      },
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          SingleChildScrollView(
-                            scrollDirection: Axis.horizontal,
-                            child: Row(
-                              children: [
-                                const Text(
-                                  'Fondo cuadro:',
-                                  style: TextStyle(color: Color(0xFF8B949E), fontSize: 12),
-                                ),
-                                const SizedBox(width: 8),
-                                for (final bg in const [
-                                  Color(0xFF111418),
-                                  Color(0xFF050608),
-                                  Color(0xFF1B2432),
-                                  Color(0xFF1A2821),
-                                  Color(0xFF2B1F1D),
-                                  Color(0xFF241E2E),
-                                  Color(0xFFE8DFD5),
-                                ])
-                                  GestureDetector(
-                                    onTap: () {
-                                      setState(() => _avatarBoxBg = bg);
-                                      _saveAvatarPrefs();
-                                      setGridState(() {});
-                                    },
-                                    child: Container(
-                                      margin: const EdgeInsets.only(right: 8),
-                                      width: 24,
-                                      height: 24,
-                                      decoration: BoxDecoration(
-                                        color: bg,
-                                        borderRadius: BorderRadius.circular(6),
-                                        border: Border.all(
-                                          color: (_avatarBoxBg ?? const Color(0xFF111418)) == bg
-                                              ? const Color(0xFFD97757)
-                                              : const Color(0xFF30363D),
-                                          width: (_avatarBoxBg ?? const Color(0xFF111418)) == bg ? 2 : 1,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          GridView.builder(
-                            shrinkWrap: true,
-                            physics: const NeverScrollableScrollPhysics(),
-                            itemCount: _geminiVariants.length,
-                            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                              crossAxisCount: 2,
-                              mainAxisSpacing: 12,
-                              crossAxisSpacing: 12,
-                              childAspectRatio: 1.05,
-                            ),
-                            itemBuilder: (ctx, idx) {
-                              final v = _geminiVariants[idx];
-                              final isSelected = _geminiProfile?.variant == v.variant;
-                              return GestureDetector(
-                                onTap: () {
-                                  setState(() {
-                                    _geminiProfile = v;
-                                    _customPhotoPath = null;
-                                    _customRivePath = null;
-                                  });
-                                  _saveAvatarPrefs();
-                                  Navigator.of(sheetCtx).pop();
-                                },
-                                child: Container(
-                                  padding: const EdgeInsets.all(10),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFF0E1013),
-                                    borderRadius: BorderRadius.circular(12),
-                                    border: Border.all(
-                                      color: isSelected
-                                          ? const Color(0xFFD97757)
-                                          : const Color(0xFF262B32),
-                                      width: isSelected ? 2 : 1,
-                                    ),
-                                  ),
-                                  child: Column(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      Expanded(
-                                        child: Center(
-                                          child: GeminiCharacterPreview(
-                                            profile: v,
-                                            size: 86,
-                                            boxBackgroundColor: _avatarBoxBg,
-                                          ),
-                                        ),
-                                      ),
-                                      const SizedBox(height: 6),
-                                      Text(
-                                        v.vibe,
-                                        style: TextStyle(
-                                          color: isSelected
-                                              ? const Color(0xFFD97757)
-                                              : const Color(0xFFE6EDF3),
-                                          fontSize: 12.5,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                        ],
-                      );
-                    },
-                  ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
   }
 
   void _onTextChanged() {
@@ -519,6 +168,9 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
   @override
   void dispose() {
     widget.client.removeListener(_onClientUpdated);
+    _prefs
+      ..removeListener(_onClientUpdated)
+      ..dispose();
     _inputController.removeListener(_onTextChanged);
     _inputController.dispose();
     _scrollController.dispose();
@@ -586,258 +238,20 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
     final file = res.first;
     final path = file.path;
     if (path == null || !mounted) return;
-
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: const Color(0xFF1A1D21),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
-      ),
-      builder: (ctx) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
-                child: Text(
-                  'Archivo: ${file.name}',
-                  style: const TextStyle(
-                    color: Color(0xFFE6EDF3),
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-              ListTile(
-                leading: const Icon(Icons.add_photo_alternate_rounded, color: Color(0xFFD97757)),
-                title: const Text('Adjuntar al mensaje para escribir texto', style: TextStyle(color: Color(0xFFE6EDF3))),
-                onTap: () {
-                  Navigator.of(ctx).pop();
-                  setState(() {
-                    if (!_stagedAttachments.contains(path)) {
-                      _stagedAttachments.add(path);
-                    }
-                  });
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.auto_awesome, color: Color(0xFFD97757)),
-                title: const Text('Enviar directo para analizar con IA', style: TextStyle(color: Color(0xFFE6EDF3))),
-                onTap: () {
-                  Navigator.of(ctx).pop();
-                  widget.client.uploadFile(path, target: 'cache', analyzeWithAI: true);
-                },
-              ),
-              if (path.toLowerCase().endsWith('.png') ||
-                  path.toLowerCase().endsWith('.jpg') ||
-                  path.toLowerCase().endsWith('.jpeg') ||
-                  path.toLowerCase().endsWith('.webp'))
-                ListTile(
-                  leading: const Icon(Icons.face_retouching_natural, color: Color(0xFFA371F7)),
-                  title: const Text('Crear personaje con Gemini (con laptop)', style: TextStyle(color: Color(0xFFE6EDF3))),
-                  onTap: () {
-                    Navigator.of(ctx).pop();
-                    _generateGeminiAvatarFromPhoto(path);
-                  },
-                ),
-              ListTile(
-                leading: const Icon(Icons.folder_outlined, color: Color(0xFF58A6FF)),
-                title: const Text('Guardar en proyecto (cwd)', style: TextStyle(color: Color(0xFFE6EDF3))),
-                onTap: () {
-                  Navigator.of(ctx).pop();
-                  widget.client.uploadFile(path, target: 'cwd');
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.download_outlined, color: Color(0xFF3FB950)),
-                title: const Text('Guardar en ~/Downloads', style: TextStyle(color: Color(0xFFE6EDF3))),
-                onTap: () {
-                  Navigator.of(ctx).pop();
-                  widget.client.uploadFile(path, target: 'downloads');
-                },
-              ),
-            ],
-          ),
-        );
-      },
+    showFileActionsSheet(
+      context,
+      client: widget.client,
+      path: path,
+      fileName: file.name,
+      onAttach: () => setState(() {
+        if (!_stagedAttachments.contains(path)) _stagedAttachments.add(path);
+      }),
+      onCreateAvatar: () => generateAvatarFromPhoto(context, _prefs, widget.client, path),
     );
   }
 
-  void _openConnectionSheet() {
-    final nameCtrl = TextEditingController(text: _assistantName);
-    final urlCtrl = TextEditingController(text: widget.client.wsUrl);
-    final tokCtrl = TextEditingController(text: widget.client.bearerToken);
-    final hub = widget.client.hubCredentials;
-    var hubEnabled = hub?.enabled ?? false;
-    final gistIdCtrl = TextEditingController(text: hub?.gistId ?? '');
-    final gistTokCtrl = TextEditingController(text: hub?.gistToken ?? '');
-    final hubSecretCtrl = TextEditingController(text: hub?.hubSecret ?? '');
-    InputDecoration field(String label) => InputDecoration(
-          labelText: label,
-          labelStyle: const TextStyle(color: Color(0xFF8B949E)),
-          enabledBorder: const OutlineInputBorder(
-            borderSide: BorderSide(color: Color(0xFF30363D)),
-          ),
-          focusedBorder: const OutlineInputBorder(
-            borderSide: BorderSide(color: Color(0xFFD97757)),
-          ),
-        );
-
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: const Color(0xFF1A1D21),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
-      ),
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setSheetState) => Padding(
-          padding: EdgeInsets.only(
-            left: 20,
-            right: 20,
-            top: 20,
-            bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
-          ),
-          child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Text(
-                'Configuración del Asistente',
-                style: TextStyle(
-                  color: Color(0xFFE6EDF3),
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 14),
-              TextField(
-                controller: nameCtrl,
-                style: const TextStyle(color: Color(0xFFE6EDF3), fontSize: 14),
-                decoration: const InputDecoration(
-                  labelText: 'Nombre del asistente',
-                  labelStyle: TextStyle(color: Color(0xFF8B949E)),
-                  enabledBorder: OutlineInputBorder(
-                    borderSide: BorderSide(color: Color(0xFF30363D)),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderSide: BorderSide(color: Color(0xFFD97757)),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: urlCtrl,
-                style: const TextStyle(color: Color(0xFFE6EDF3), fontSize: 14),
-                decoration: const InputDecoration(
-                  labelText: 'WebSocket URL (ws://100.x.y.z:8080/ws)',
-                  labelStyle: TextStyle(color: Color(0xFF8B949E)),
-                  enabledBorder: OutlineInputBorder(
-                    borderSide: BorderSide(color: Color(0xFF30363D)),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderSide: BorderSide(color: Color(0xFFD97757)),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: tokCtrl,
-                obscureText: true,
-                style: const TextStyle(color: Color(0xFFE6EDF3), fontSize: 14),
-                decoration: const InputDecoration(
-                  labelText: 'Bearer Token (MOBILE_WS_TOKEN)',
-                  labelStyle: TextStyle(color: Color(0xFF8B949E)),
-                  enabledBorder: OutlineInputBorder(
-                    borderSide: BorderSide(color: Color(0xFF30363D)),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderSide: BorderSide(color: Color(0xFFD97757)),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 8),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                value: hubEnabled,
-                onChanged: (v) => setSheetState(() => hubEnabled = v),
-                title: const Text(
-                  'Conectar por Hub (Gist)',
-                  style: TextStyle(color: Color(0xFFE6EDF3), fontSize: 14),
-                ),
-                subtitle: const Text(
-                  'Encuentra la PC aunque cambie de red',
-                  style: TextStyle(color: Color(0xFF8B949E), fontSize: 12),
-                ),
-              ),
-              if (hubEnabled) ...[
-                const SizedBox(height: 8),
-                TextField(
-                  controller: gistIdCtrl,
-                  style: const TextStyle(color: Color(0xFFE6EDF3), fontSize: 14),
-                  decoration: field('Gist ID'),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: gistTokCtrl,
-                  obscureText: true,
-                  style: const TextStyle(color: Color(0xFFE6EDF3), fontSize: 14),
-                  decoration: field('Token de GitHub (solo permiso gist)'),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: hubSecretCtrl,
-                  obscureText: true,
-                  style: const TextStyle(color: Color(0xFFE6EDF3), fontSize: 14),
-                  decoration: field('Secreto del Hub'),
-                ),
-              ],
-              const SizedBox(height: 16),
-              FilledButton(
-                style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFFD97757),
-                  foregroundColor: const Color(0xFF0D1117),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                ),
-                onPressed: () {
-                  Navigator.of(ctx).pop();
-                  final nextName = nameCtrl.text.trim();
-                  if (nextName.isNotEmpty) {
-                    setState(() => _assistantName = nextName);
-                    _saveAvatarPrefs();
-                  }
-                  final client = widget.client;
-                  final hubCreds = HubCredentials(
-                    enabled: hubEnabled,
-                    gistToken: gistTokCtrl.text.trim(),
-                    gistId: gistIdCtrl.text.trim(),
-                    hubSecret: hubSecretCtrl.text.trim(),
-                  );
-                  // Persist direct-mode values first, then reconnect through the hub when on.
-                  unawaited(() async {
-                    await client.updateCredentials(
-                      wsUrl: urlCtrl.text,
-                      bearerToken: tokCtrl.text,
-                    );
-                    await client.configureHubRelay(hubCreds);
-                  }());
-                },
-                child: const Text(
-                  'Guardar y Reconectar',
-                  style: TextStyle(fontWeight: FontWeight.w600),
-                ),
-              ),
-            ],
-          ),
-          ),
-        ),
-      ),
-    );
-  }
+  void _openConnectionSheet() =>
+      showConnectionSettingsSheet(context, widget.client, _prefs);
 
   @override
   Widget build(BuildContext context) {
@@ -909,9 +323,9 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
                           activity: widget.client.activity,
                           speaking: state == CharacterState.speaking,
                           size: 112,
-                          customPhotoPath: _customPhotoPath,
-                          geminiProfile: _geminiProfile,
-                          boxBackgroundColor: _avatarBoxBg,
+                          customPhotoPath: _prefs.customPhotoPath,
+                          geminiProfile: _prefs.geminiProfile,
+                          boxBackgroundColor: _prefs.boxBackground,
                           onLongPress: _confirmStop,
                           onTapIdleFallback: () => _onAvatarTap(state),
                           fallback: Center(
@@ -920,11 +334,11 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
                               height: 66,
                               child: RiveCompanionAvatar(
                                 state: state,
-                                style: _avatarStyle,
-                                accessory: _avatarAccessory,
-                                customAccent: _avatarAccent,
-                                customBgColor: _avatarBoxBg,
-                                customRivePath: _customRivePath,
+                                style: _prefs.style,
+                                accessory: _prefs.accessory,
+                                customAccent: _prefs.accent,
+                                customBgColor: _prefs.boxBackground,
+                                customRivePath: _prefs.customRivePath,
                               ),
                             ),
                           ),
@@ -937,7 +351,7 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
                             borderRadius: BorderRadius.circular(14),
                           ),
                           child: Text(
-                            _assistantName,
+                            _prefs.assistantName,
                             style: const TextStyle(
                               color: Color(0xFFE6EDF3),
                               fontSize: 12,
@@ -947,7 +361,10 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
                         ),
                         if (state != CharacterState.idle && widget.client.activity.label.isEmpty) ...[
                           const SizedBox(height: 5),
-                          _buildStatusBubble(state),
+                          StatusBubble(
+                            state: state,
+                            liveTool: _liveToolStatus(),
+                          ),
                         ],
                       ],
                     ),
@@ -1429,230 +846,15 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
     _openOptionPicker('/model');
   }
 
-  void _openNotificationsInbox() {
-    widget.client.markNotificationsRead();
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: const Color(0xFF1A1D21),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
-      ),
-      builder: (ctx) {
-        // Newest first.
-        final notifs = widget.client.notifications.reversed.toList();
-        return SafeArea(
-          child: SizedBox(
-            height: MediaQuery.of(ctx).size.height * 0.65,
-            child: Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 14, 12, 8),
-                  child: Row(
-                    children: [
-                      const Expanded(
-                        child: Text(
-                          'Buzón de Tareas (AGY / Claude)',
-                          style: TextStyle(
-                            color: Color(0xFFE6EDF3),
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                      if (notifs.isNotEmpty)
-                        TextButton(
-                          onPressed: () {
-                            widget.client.clearNotifications();
-                            Navigator.of(ctx).pop();
-                          },
-                          child: const Text(
-                            'Limpiar',
-                            style: TextStyle(color: Color(0xFFF85149)),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-                const Divider(color: Color(0xFF21262D), height: 1),
-                Expanded(
-                  child: notifs.isEmpty
-                      ? const Center(
-                          child: Text(
-                            'Sin notificaciones de terminal/IDE aún.',
-                            style: TextStyle(color: Color(0xFF8B949E), fontSize: 13),
-                          ),
-                        )
-                      : ListView.separated(
-                          padding: const EdgeInsets.all(14),
-                          itemCount: notifs.length,
-                          separatorBuilder: (_, __) => const SizedBox(height: 10),
-                          itemBuilder: (_, idx) {
-                            final n = notifs[idx];
-                            return Container(
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF111315),
-                                borderRadius: BorderRadius.circular(8),
-                                border: Border.all(color: const Color(0xFF21262D)),
-                              ),
-                              child: SelectableText(
-                                n.text,
-                                style: const TextStyle(
-                                  color: Color(0xFFE6EDF3),
-                                  fontSize: 13,
-                                  height: 1.4,
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
+  String _liveToolStatus() {
+    final msgs = widget.client.messages;
+    if (msgs.isEmpty || msgs.last.isUser) return '';
+    return msgs.last.toolStatus.trim();
   }
 
-  Future<void> _openOptionPicker(String cmd) async {
-    if (cmd == '/new') cmd = '/project';
-    var data = await widget.client.fetchOptionsOverWs(cmd);
-    if (!mounted) return;
-    // The resume list must always appear so a clean chat can be picked even when
-    // the PC returns no history or the options request fails.
-    if (data == null && cmd == '/resume') data = const {};
-    if (data == null) return;
+  void _openNotificationsInbox() => showNotificationsSheet(context, widget.client);
 
-    final String title;
-    final List<({String label, String sub, String command, bool active})> items = [];
-
-    if (cmd == '/model') {
-      title = 'Seleccionar Modelo';
-      final activeMod = data['active_model'] as String? ?? '';
-      for (final m in (data['models'] as List? ?? [])) {
-        final id = m['id'] as String? ?? '';
-        final name = m['name'] as String? ?? id;
-        items.add((
-          label: name,
-          sub: id,
-          command: '/model $id',
-          active: id == activeMod,
-        ));
-      }
-    } else if (cmd == '/project') {
-      title = 'Seleccionar Proyecto';
-      final activeCwd = data['active_cwd'] as String? ?? '';
-      for (final p in (data['projects'] as List? ?? [])) {
-        final name = p['name'] as String? ?? '';
-        final path = p['path'] as String? ?? '';
-        items.add((
-          label: name,
-          sub: path,
-          command: '/cd $name',
-          active: path == activeCwd,
-        ));
-      }
-    } else {
-      title = 'Seleccionar Chat';
-      final raw = data['chats'] as List? ?? [];
-      if (!raw.any((c) => c['id'] == 'NEW')) {
-        items.add((
-          label: '➕ Nuevo chat limpio en este proyecto',
-          sub: 'NEW',
-          command: '/resume NEW',
-          active: false,
-        ));
-      }
-      for (final c in (data['chats'] as List? ?? [])) {
-        final id = c['id'] as String? ?? '';
-        final cTitle = c['title'] as String? ?? id;
-        items.add((
-          label: cTitle,
-          sub: id,
-          command: '/resume $id',
-          active: false,
-        ));
-      }
-    }
-
-    if (!mounted) return;
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: const Color(0xFF1A1D21),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
-      ),
-      builder: (ctx) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 10),
-                child: Text(
-                  title,
-                  style: const TextStyle(
-                    color: Color(0xFFE6EDF3),
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-              const Divider(color: Color(0xFF21262D), height: 1),
-              Flexible(
-                child: ListView.builder(
-                  shrinkWrap: true,
-                  itemCount: items.length,
-                  itemBuilder: (_, idx) {
-                    final it = items[idx];
-                    return ListTile(
-                      leading: Icon(
-                        it.active ? Icons.check_circle : Icons.circle_outlined,
-                        color: it.active
-                            ? const Color(0xFF3FB950)
-                            : const Color(0xFF6E7681),
-                        size: 20,
-                      ),
-                      title: Text(
-                        it.label,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: Color(0xFFE6EDF3), fontSize: 14),
-                      ),
-                      subtitle: Text(
-                        it.sub,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: Color(0xFF6E7681), fontSize: 11),
-                      ),
-                      onTap: () {
-                        Navigator.of(ctx).pop();
-                        if (it.command.startsWith('/cd ')) {
-                          widget.client.openSession(
-                            id: '${it.command}_${DateTime.now().millisecondsSinceEpoch}',
-                            project: it.label,
-                            title: it.label,
-                          );
-                          widget.client.sendPrompt(it.command);
-                          // The worker handles messages in order, so this list is
-                          // already filtered to the project chosen by `/cd`.
-                          _openOptionPicker('/resume');
-                          return;
-                        }
-                        widget.client.sendPrompt(it.command);
-                      },
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
+  Future<void> _openOptionPicker(String cmd) => showOptionPicker(context, widget.client, cmd);
 
   void _openObsidianVault() {
     ObsidianVaultSheet.show(
@@ -1702,262 +904,5 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
     );
   }
 
-  Widget _buildStatusBubble(CharacterState state) {
-    String label;
-    Color dotColor;
-    final lastMsg = widget.client.messages.isNotEmpty ? widget.client.messages.last : null;
-    final liveTool = (lastMsg != null && !lastMsg.isUser) ? lastMsg.toolStatus.trim() : '';
-
-    switch (state) {
-      case CharacterState.thinking:
-        label = liveTool.isNotEmpty ? liveTool : 'Pensando...';
-        dotColor = const Color(0xFFD29922);
-      case CharacterState.speaking:
-        label = 'Respondiendo...';
-        dotColor = const Color(0xFF3FB950);
-      case CharacterState.listening:
-        label = 'Escribiendo...';
-        dotColor = const Color(0xFF58A6FF);
-      case CharacterState.sleeping:
-        label = 'PC offline';
-        dotColor = const Color(0xFF6E7681);
-      case CharacterState.idle:
-        return const SizedBox.shrink();
-    }
-
-    return Container(
-      constraints: const BoxConstraints(maxWidth: 220),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: const Color(0xFF15181C),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: dotColor.withValues(alpha: 0.45)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 7,
-            height: 7,
-            decoration: BoxDecoration(color: dotColor, shape: BoxShape.circle),
-          ),
-          const SizedBox(width: 6),
-          Flexible(
-            child: Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: Color(0xFFE6EDF3), fontSize: 11),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _openAvatarCustomizer() {
-    const colors = [
-      Color(0xFF3FB950),
-      Color(0xFF58A6FF),
-      Color(0xFFD97757),
-      Color(0xFFA371F7),
-      Color(0xFFD29922),
-    ];
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: const Color(0xFF15181C),
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (sheetCtx) => StatefulBuilder(
-        builder: (ctx, setSheetState) => Padding(
-          padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Text(
-                'Personalizar personaje',
-                style: TextStyle(
-                  color: Color(0xFFE6EDF3),
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 12),
-              const Text('Estilo', style: TextStyle(color: Color(0xFF8B949E), fontSize: 12)),
-              const SizedBox(height: 6),
-              Wrap(
-                spacing: 8,
-                children: [
-                  for (final s in AvatarStyle.values)
-                    ChoiceChip(
-                      label: Text(s.name),
-                      selected: _avatarStyle == s &&
-                          _customRivePath == null &&
-                          _customPhotoPath == null &&
-                          _geminiProfile == null,
-                      onSelected: (_) {
-                        setState(() {
-                          _avatarStyle = s;
-                          _customRivePath = null;
-                          _customPhotoPath = null;
-                          _geminiProfile = null;
-                        });
-                        _saveAvatarPrefs();
-                        setSheetState(() {});
-                      },
-                    ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              const Text('Accesorio', style: TextStyle(color: Color(0xFF8B949E), fontSize: 12)),
-              const SizedBox(height: 6),
-              Wrap(
-                spacing: 8,
-                children: [
-                  for (final a in AvatarAccessory.values)
-                    ChoiceChip(
-                      label: Text(a.name),
-                      selected: _avatarAccessory == a,
-                      onSelected: (_) {
-                        setState(() => _avatarAccessory = a);
-                        _saveAvatarPrefs();
-                        setSheetState(() {});
-                      },
-                    ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              const Text('Color de acento', style: TextStyle(color: Color(0xFF8B949E), fontSize: 12)),
-              const SizedBox(height: 6),
-              Row(
-                children: [
-                  for (final c in colors)
-                    GestureDetector(
-                      onTap: () {
-                        setState(() => _avatarAccent = c);
-                        _saveAvatarPrefs();
-                        setSheetState(() {});
-                      },
-                      child: Container(
-                        margin: const EdgeInsets.only(right: 10),
-                        width: 28,
-                        height: 28,
-                        decoration: BoxDecoration(
-                          color: c,
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: _avatarAccent == c ? Colors.white : Colors.transparent,
-                            width: 2,
-                          ),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              const Text('Fondo del cuadro', style: TextStyle(color: Color(0xFF8B949E), fontSize: 12)),
-              const SizedBox(height: 6),
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  children: [
-                    for (final bg in const [
-                      Color(0xFF111418),
-                      Color(0xFF050608),
-                      Color(0xFF1B2432),
-                      Color(0xFF1A2821),
-                      Color(0xFF2B1F1D),
-                      Color(0xFF241E2E),
-                      Color(0xFFE8DFD5),
-                    ])
-                      GestureDetector(
-                        onTap: () {
-                          setState(() => _avatarBoxBg = bg);
-                          _saveAvatarPrefs();
-                          setSheetState(() {});
-                        },
-                        child: Container(
-                          margin: const EdgeInsets.only(right: 10),
-                          width: 28,
-                          height: 28,
-                          decoration: BoxDecoration(
-                            color: bg,
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(
-                              color: (_avatarBoxBg ?? const Color(0xFF111418)) == bg
-                                  ? const Color(0xFFD97757)
-                                  : const Color(0xFF30363D),
-                              width: (_avatarBoxBg ?? const Color(0xFF111418)) == bg ? 2 : 1,
-                            ),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 14),
-              FilledButton.tonalIcon(
-                onPressed: _isGeneratingAvatar
-                    ? null
-                    : () async {
-                        final picked = await FilePicker.pickFiles(type: FileType.image);
-                        if (picked.isEmpty) return;
-                        final path = picked.first.path;
-                        if (path == null) return;
-                        if (sheetCtx.mounted) Navigator.of(sheetCtx).pop();
-                        await _generateGeminiAvatarFromPhoto(path);
-                      },
-                icon: const Icon(Icons.auto_awesome_rounded, size: 18),
-                label: Text(
-                  _geminiProfile != null
-                      ? 'Subir otra foto para crear 4 opciones'
-                      : 'Crear personaje desde tu foto (4 opciones)',
-                ),
-              ),
-              if (_geminiVariants.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                OutlinedButton.icon(
-                  onPressed: () {
-                    Navigator.of(sheetCtx).pop();
-                    _openGeminiVariantPicker(_geminiVariants);
-                  },
-                  icon: const Icon(Icons.grid_view_rounded, size: 18),
-                  label: Text('Cambiar entre mis 4 opciones (${_geminiProfile?.vibe ?? "Plush"})'),
-                ),
-              ],
-              const SizedBox(height: 8),
-              OutlinedButton.icon(
-                onPressed: () async {
-                  final picked = await FilePicker.pickFiles(type: FileType.any);
-                  if (picked.isEmpty) return;
-                  final path = picked.first.path;
-                  if (path == null) return;
-                  final lower = path.toLowerCase();
-                  if (lower.endsWith('.riv')) {
-                    setState(() {
-                      _customRivePath = path;
-                      _customPhotoPath = null;
-                    });
-                  } else {
-                    return;
-                  }
-                  _saveAvatarPrefs();
-                  if (sheetCtx.mounted) Navigator.of(sheetCtx).pop();
-                },
-                icon: const Icon(Icons.view_in_ar_rounded, size: 18),
-                label: Text(
-                  _customRivePath != null
-                      ? 'Rive activo: ${_customRivePath!.split('/').last}'
-                      : 'Importar animación (.riv)',
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+  void _openAvatarCustomizer() => showAvatarCustomizerSheet(context, _prefs, widget.client);
 }
