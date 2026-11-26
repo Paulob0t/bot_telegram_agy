@@ -22,9 +22,9 @@ fi
 
 loginctl enable-linger "$USER" >/dev/null 2>&1 || true
 systemctl --user daemon-reload
-systemctl --user enable --now telegram-bot.service
-systemctl --user restart telegram-bot.service
+systemctl --user enable --now agent.service
+systemctl --user restart agent.service
 
 echo ""
 echo "✓ Servicio activo. Datos para la App Flutter:"
-/mnt/datos/Projects/telegram-paulobot/telegram-bot mobile-info
+/mnt/datos/Projects/agente-bot/agente-bot mobile-info

@@ -13,35 +13,30 @@ import (
 )
 
 type Config struct {
-	Token                   string
-	AuthorizedUserID        int64
-	EnableTelegram          bool
-	MobileWSAddr            string
-	MobileWSToken           string
-	HomeDir                 string
-	ProjectsBaseDir         string
-	ObsidianVaultDir        string
-	BaseCLIDir              string
-	DBPath                  string
-	UsageCachePath          string
-	StateCachePath          string
-	ClaudeProjectsDir       string
-	AgyBin                  string
-	ClaudeBin               string
-	LongMessageThreshold    int
-	LongMessageWaitSeconds  float64
-	ChatIdleMinutes         float64
-	IsWindows               bool
+	MobileWSAddr           string
+	MobileWSToken          string
+	HomeDir                string
+	ProjectsBaseDir        string
+	ObsidianVaultDir       string
+	BaseCLIDir             string
+	DBPath                 string
+	UsageCachePath         string
+	StateCachePath         string
+	ClaudeProjectsDir      string
+	AgyBin                 string
+	ClaudeBin              string
+	LongMessageThreshold   int
+	LongMessageWaitSeconds float64
+	ChatIdleMinutes        float64
+	IsWindows              bool
 }
 
 func Load(projectRoot string) (*Config, error) {
 	loadDotenvFiles(projectRoot)
 
-	token := strings.TrimSpace(os.Getenv("TELEGRAM_BOT_TOKEN"))
-	authStr := strings.TrimSpace(os.Getenv("TELEGRAM_AUTHORIZED_USER_ID"))
-	authID, _ := strconv.ParseInt(authStr, 10, 64)
-	if token == "" || authID == 0 {
-		return nil, errors.New("faltan credenciales TELEGRAM_BOT_TOKEN o TELEGRAM_AUTHORIZED_USER_ID en .env")
+	mobileToken := strings.TrimSpace(os.Getenv("MOBILE_WS_TOKEN"))
+	if mobileToken == "" {
+		return nil, errors.New("falta MOBILE_WS_TOKEN en .env")
 	}
 
 	isWin := runtime.GOOS == "windows"
@@ -56,14 +51,9 @@ func Load(projectRoot string) (*Config, error) {
 
 	baseCLIDir := filepath.Join(homeDir, ".gemini", "antigravity-cli")
 
-	enableTG := !strings.EqualFold(envOr("ENABLE_TELEGRAM", "true"), "false")
-
 	return &Config{
-		Token:                  token,
-		AuthorizedUserID:       authID,
-		EnableTelegram:         enableTG,
 		MobileWSAddr:           envOr("MOBILE_WS_ADDR", ""),
-		MobileWSToken:          envOr("MOBILE_WS_TOKEN", token),
+		MobileWSToken:          mobileToken,
 		HomeDir:                homeDir,
 		ProjectsBaseDir:        envOr("BOT_PROJECTS_DIR", defaultProjects),
 		ObsidianVaultDir:       envOr("BOT_OBSIDIAN_DIR", defaultObsidian),
@@ -97,8 +87,8 @@ func loadDotenvFiles(projectRoot string) {
 		filepath.Join(projectRoot, ".env"),
 		filepath.Join(exeDir, envName),
 		filepath.Join(exeDir, ".env"),
-		"/mnt/datos/Projects/telegram-paulobot/.env",
-		filepath.Join(home, ".config", "telegram-bot", ".env"),
+		// Hooks run from ~/.local/bin inside any project, so they need a fixed location.
+		filepath.Join(home, ".config", "agente-bot", ".env"),
 	}
 	for _, p := range candidates {
 		f, err := os.Open(p)
@@ -225,4 +215,17 @@ func DetectTailscaleIPv4() string {
 		}
 	}
 	return ""
+}
+
+// LocalMobileURL is the base URL hooks use to reach this machine's mobile server.
+func (c *Config) LocalMobileURL() string {
+	if addr := strings.TrimSpace(c.MobileWSAddr); addr != "" {
+		if host, port, err := net.SplitHostPort(addr); err == nil {
+			if host == "" || host == "0.0.0.0" || host == "::" {
+				host = "127.0.0.1"
+			}
+			return "http://" + net.JoinHostPort(host, port)
+		}
+	}
+	return "http://127.0.0.1:8080"
 }

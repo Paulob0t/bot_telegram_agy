@@ -8,11 +8,12 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
-	"telegram-paulobot/internal/chats"
-	"telegram-paulobot/internal/config"
-	"telegram-paulobot/internal/state"
+	"agente-bot/internal/chats"
+	"agente-bot/internal/config"
+	"agente-bot/internal/state"
 )
 
 type StreamCallbacks struct {
@@ -23,6 +24,13 @@ type StreamCallbacks struct {
 }
 
 // RunPrompt mantiene compatibilidad hacia atrás con callbacks simples de texto parcial.
+// botRunEnv marks CLI runs started by the bot so the Stop hooks skip a duplicate
+// notification: the app already streams that reply live.
+const botRunEnv = "AGENTE_BOT_RUN=1"
+
+// backgroundPrefix starts the label shown while AGY waits on a background task.
+const backgroundPrefix = "En segundo plano"
+
 func RunPrompt(ctx context.Context, cfg *config.Config, st *state.BotSessionState, prompt string, onChunk func(partial string)) (string, error) {
 	return RunPromptWithEvents(ctx, cfg, st, prompt, StreamCallbacks{
 		OnChunk: func(text, toolStatus string, done bool) {
@@ -45,7 +53,7 @@ func RunPrompt(ctx context.Context, cfg *config.Config, st *state.BotSessionStat
 }
 
 // RunPromptWithEvents ejecuta agy o claude con --output-format stream-json y --dangerously-skip-permissions,
-// emitiendo transiciones de estado ("thinking", "speaking", "idle") y fragmentos para Telegram y WebSocket móvil.
+// emitiendo transiciones de estado ("thinking", "speaking", "idle") y fragmentos para la app móvil.
 func RunPromptWithEvents(ctx context.Context, cfg *config.Config, st *state.BotSessionState, prompt string, cb StreamCallbacks) (string, error) {
 	currentState := ""
 	emitState := func(next string) {
@@ -59,19 +67,32 @@ func RunPromptWithEvents(ctx context.Context, cfg *config.Config, st *state.BotS
 	}
 	defer emitState("idle")
 
+	// The transcript watcher emits from its own goroutine.
+	var activityMu sync.Mutex
 	var lastActivity Activity
+	var lastTool string // last tool label, names the task AGY waits on in background
 	emitActivity := func(a Activity) {
+		activityMu.Lock()
+		defer activityMu.Unlock()
+		if a.State == ActivityExecuting && !strings.HasPrefix(a.Label, backgroundPrefix) {
+			lastTool = a.Label
+		}
 		if cb.OnActivity == nil || a == lastActivity {
 			return
 		}
 		lastActivity = a
 		cb.OnActivity(a)
 	}
+	backgroundLabel := func() string {
+		activityMu.Lock()
+		defer activityMu.Unlock()
+		if lastTool == "" {
+			return backgroundPrefix
+		}
+		return backgroundPrefix + " · " + lastTool
+	}
 
 	fullPrompt := prompt
-	if !strings.Contains(fullPrompt, "[Telegram:") && !strings.Contains(fullPrompt, "[Mobile:") {
-		fullPrompt += "\n\n[Telegram: responde ultracave, máx 4 líneas cortas salvo que pida detalle]"
-	}
 
 	var bin string
 	var args []string
@@ -102,7 +123,7 @@ func RunPromptWithEvents(ctx context.Context, cfg *config.Config, st *state.BotS
 		} else if st.ClaudeSessionID != "NEW" {
 			args = append(args, "-r", st.ClaudeSessionID)
 		}
-		envExtra = []string{"CLAUDE_FROM_TELEGRAM=1", "AGY_FROM_TELEGRAM=1"}
+		envExtra = []string{botRunEnv}
 	} else {
 		bin = cfg.AgyBin
 		args = []string{
@@ -123,12 +144,17 @@ func RunPromptWithEvents(ctx context.Context, cfg *config.Config, st *state.BotS
 		if !hasSuffix && st.CurrentEffort != "" {
 			args = append(args, "--effort", st.CurrentEffort)
 		}
+		convID := st.CurrentConversationID
+		if convID != "" && convID != "LATEST" && convID != "NEW" && !chats.AgyConversationExists(cfg, convID) {
+			// Deleted conversation: AGY would warn and ignore the flag, so start clean instead.
+			st.CurrentConversationID = "NEW"
+		}
 		if st.CurrentConversationID == "" || st.CurrentConversationID == "LATEST" {
 			args = append(args, "-c")
 		} else if st.CurrentConversationID != "NEW" {
 			args = append(args, "--conversation", st.CurrentConversationID)
 		}
-		envExtra = []string{"AGY_FROM_TELEGRAM=1", "CLAUDE_FROM_TELEGRAM=1"}
+		envExtra = []string{botRunEnv}
 	}
 
 	if isClaude && st.ClaudeSessionID == "NEW" {
@@ -200,7 +226,7 @@ func RunPromptWithEvents(ctx context.Context, cfg *config.Config, st *state.BotS
 		}
 		if strings.HasPrefix(line, "root agent idle; waiting for") {
 			emitState("thinking")
-			emitActivity(Activity{State: ActivityExecuting, Label: "Esperando proceso en segundo plano"})
+			emitActivity(Activity{State: ActivityExecuting, Label: backgroundLabel()})
 			continue
 		}
 		if !strings.HasPrefix(line, "{") {

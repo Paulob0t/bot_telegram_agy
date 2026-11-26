@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"telegram-paulobot/internal/config"
-	"telegram-paulobot/internal/executor"
-	"telegram-paulobot/internal/state"
+	"agente-bot/internal/config"
+	"agente-bot/internal/executor"
+	"agente-bot/internal/state"
 )
 
 type State string
@@ -33,7 +33,7 @@ const (
 	EventTypeAgentStatus EventType = "agent_status"
 )
 
-// Event modela el contrato unificado de salida para WebSocket (Flutter + Rive) y Telegram.
+// Event modela el contrato de salida por WebSocket hacia la app (Flutter).
 type Event struct {
 	Type       EventType `json:"type"`
 	State      State     `json:"state,omitempty"`
@@ -52,13 +52,13 @@ type Request struct {
 	UserID    string `json:"user_id"`
 	Text      string `json:"text"`
 	Timestamp int64  `json:"timestamp"`
-	Source    string `json:"source,omitempty"` // "telegram" | "mobile"
+	Source    string `json:"source,omitempty"` // "mobile"
 	SessionID string `json:"session_id,omitempty"`
 }
 
 type RunnerFunc func(ctx context.Context, cfg *config.Config, st *state.BotSessionState, prompt string, cb executor.StreamCallbacks) (string, error)
 
-// Service desacopla la ejecución del agente (AGY / Claude) de los canales de transporte (Telegram y WebSocket móvil).
+// Service desacopla la ejecución del agente (AGY / Claude) del transporte (servidor directo y Hub relay).
 type Service struct {
 	cfg    *config.Config
 	st     *state.BotSessionState
@@ -113,7 +113,7 @@ func (s *Service) CancelActive() bool {
 	return false
 }
 
-// Subscribe registra un listener global de eventos (ideal para sincronizar Rive en móvil aunque el prompt venga de Telegram).
+// Subscribe registra un listener global de eventos (sincroniza todos los clientes móviles conectados).
 func (s *Service) Subscribe(fn func(Event)) func() {
 	s.subMu.Lock()
 	s.nextSubID++
@@ -242,7 +242,7 @@ func (s *Service) ExecuteWithState(parentCtx context.Context, st *state.BotSessi
 	startedAt := time.Now()
 
 	formattedPrompt := prompt
-	if req.Source == "mobile" && !strings.Contains(formattedPrompt, "[Mobile:") {
+	if !strings.Contains(formattedPrompt, "[Mobile:") {
 		formattedPrompt += "\n\n[Mobile: responde claro y conciso para interfaz móvil con asistente visual]"
 	}
 

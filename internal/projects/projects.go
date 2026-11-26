@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"telegram-paulobot/internal/config"
-	"telegram-paulobot/internal/utils"
+	"agente-bot/internal/config"
+	"agente-bot/internal/utils"
 )
 
 type Project struct {

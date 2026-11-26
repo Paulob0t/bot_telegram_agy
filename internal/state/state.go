@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"telegram-paulobot/internal/config"
+	"agente-bot/internal/config"
 )
 
 var ValidEfforts = map[string]bool{
@@ -32,6 +32,9 @@ type BotSessionState struct {
 	Features                 map[string]bool   `json:"features"`
 	UpdatedAt                float64           `json:"updated_at"`
 	LastUsageData            map[string]any    `json:"-"`
+
+	// ephemeral states live only in memory; see NewSession.
+	ephemeral bool
 }
 
 func New(cfg *config.Config) *BotSessionState {
@@ -58,14 +61,12 @@ func defaultFeatures(cfg *config.Config) map[string]bool {
 	_, claudeErr := exec.LookPath(cfg.ClaudeBin)
 	hasClaude := claudeErr == nil
 	return map[string]bool{
-		"claude":          hasClaude,
-		"obsidian":        hasObsidian,
-		"prompts":         hasObsidian,
-		"screen":          true,
-		"chat_guard":      true,
-		"long_buffer":     true,
-		"notify_telegram": true,
-		"notify_desktop":  true,
+		"claude":         hasClaude,
+		"obsidian":       hasObsidian,
+		"prompts":        hasObsidian,
+		"screen":         true,
+		"notify_mobile":  true,
+		"notify_desktop": true,
 		// Off by default: when on, risky Claude tool calls block until the phone answers.
 		"mobile_approvals": false,
 	}
@@ -118,9 +119,40 @@ func (s *BotSessionState) loadState() {
 	s.UpdatedAt = loaded.UpdatedAt
 }
 
+// NewSession returns an in-memory chat state seeded from s, starting a fresh
+// conversation in the same project. It never writes the state file, so parallel
+// chats cannot overwrite the global settings.
+func (s *BotSessionState) NewSession() *BotSessionState {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	features := make(map[string]bool, len(s.Features))
+	for k, v := range s.Features {
+		features[k] = v
+	}
+	return &BotSessionState{
+		cfg:                      s.cfg,
+		CurrentEngine:            s.CurrentEngine,
+		CurrentConversationID:    "NEW",
+		CurrentConversationTitle: "Nuevo chat independiente",
+		ClaudeSessionID:          "NEW",
+		ClaudeSessionTitle:       "Nuevo chat Claude",
+		ClaudeModel:              s.ClaudeModel,
+		CurrentModel:             s.CurrentModel,
+		CurrentEffort:            s.CurrentEffort,
+		CurrentCWD:               s.CurrentCWD,
+		ConversationCWDMap:       make(map[string]string),
+		Features:                 features,
+		LastUsageData:            make(map[string]any),
+		ephemeral:                true,
+	}
+}
+
 func (s *BotSessionState) Save() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.ephemeral {
+		return nil
+	}
 
 	s.UpdatedAt = float64(time.Now().UnixNano()) / 1e9
 	data, err := json.MarshalIndent(s, "", "  ")

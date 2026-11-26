@@ -1,4 +1,4 @@
-module telegram-paulobot
+module agente-bot
 
 go 1.24
 

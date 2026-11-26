@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"telegram-paulobot/internal/config"
+	"agente-bot/internal/config"
 )
 
 func TestSavePDFToVaultAndDirectory(t *testing.T) {

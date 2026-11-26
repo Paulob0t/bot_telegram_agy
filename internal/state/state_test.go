@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"telegram-paulobot/internal/config"
+	"agente-bot/internal/config"
 )
 
 func TestStateSaveAndLoad(t *testing.T) {
@@ -30,5 +30,24 @@ func TestStateSaveAndLoad(t *testing.T) {
 	}
 	if s2.CurrentModel != "gemini-4-argon-low" {
 		t.Fatalf("model = %q, want gemini-4-argon-low", s2.CurrentModel)
+	}
+}
+
+func TestNewSessionNeverWritesStateFile(t *testing.T) {
+	cfg := &config.Config{HomeDir: t.TempDir()}
+	cfg.StateCachePath = filepath.Join(cfg.HomeDir, "state.json")
+	global := New(cfg)
+	global.Features["mobile_approvals"] = true
+	if err := global.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	sess := global.NewSession()
+	sess.Features["mobile_approvals"] = false
+	sess.SetClaudeSession("abc", "x", "")
+
+	reloaded := New(cfg)
+	if !reloaded.FeatureEnabled("mobile_approvals") {
+		t.Fatal("la sesión efímera sobrescribió el estado global")
 	}
 }

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"agente-bot/internal/config"
 	"encoding/json"
-	"telegram-paulobot/internal/config"
 )
 
 // watchAgyTranscript tails the local AGY `transcript.jsonl` file (0 extra tokens, identical to Ctrl+O)

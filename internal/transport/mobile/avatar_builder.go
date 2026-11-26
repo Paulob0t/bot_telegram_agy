@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"telegram-paulobot/internal/guard"
+	"agente-bot/internal/uploads"
 )
 
 // AvatarTraits holds the stylized character traits extracted from a user photo.
@@ -126,7 +126,7 @@ func (s *Server) handleAvatarFromPhoto(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	uploadsDir := guard.PrepareUploadsDir(s.cfg.HomeDir)
+	uploadsDir := uploads.PrepareDir(s.cfg.HomeDir)
 	ext := filepath.Ext(header.Filename)
 	if ext == "" {
 		ext = ".jpg"
@@ -171,7 +171,7 @@ func (s *Server) extractVariantsWithGemini(parentCtx context.Context, photoPath 
 		"--dangerously-skip-permissions",
 	)
 	cmd.Dir = s.cfg.HomeDir
-	cmd.Env = append(os.Environ(), "AGY_FROM_TELEGRAM=1", "CLAUDE_FROM_TELEGRAM=1")
+	cmd.Env = append(os.Environ(), "AGENTE_BOT_RUN=1")
 
 	rawOut, err := cmd.CombinedOutput()
 	if err != nil {

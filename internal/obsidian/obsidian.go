@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"telegram-paulobot/internal/config"
+	"agente-bot/internal/config"
 )
 
 type Note struct {

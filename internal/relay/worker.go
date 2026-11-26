@@ -7,18 +7,15 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
 
-	"telegram-paulobot/internal/agent"
-	"telegram-paulobot/internal/chats"
-	"telegram-paulobot/internal/config"
-	"telegram-paulobot/internal/models"
-	"telegram-paulobot/internal/projects"
-	"telegram-paulobot/internal/state"
+	"agente-bot/internal/agent"
+	"agente-bot/internal/commands"
+	"agente-bot/internal/config"
+	"agente-bot/internal/state"
 )
 
 // RunWorkerWithURL connects outbound to an explicit Hub WebSocket URL (e.g. ws://127.0.0.1:8080/ws/worker?role=cel)
@@ -129,14 +126,9 @@ func connectAndServeWorker(ctx context.Context, cfg *config.Config, st *state.Bo
 		if existing, ok := sessionStates[sid]; ok {
 			return existing
 		}
-		cloned := state.New(cfg)
-		cloned.CurrentCWD = st.CurrentCWD
-		cloned.CurrentEngine = st.CurrentEngine
-		cloned.CurrentModel = st.CurrentModel
-		cloned.CurrentConversationID = "NEW"
-		cloned.CurrentConversationTitle = "Nuevo chat independiente"
-		sessionStates[sid] = cloned
-		return cloned
+		sess := st.NewSession()
+		sessionStates[sid] = sess
+		return sess
 	}
 
 	for {
@@ -166,126 +158,15 @@ func connectAndServeWorker(ctx context.Context, cfg *config.Config, st *state.Bo
 			continue
 		}
 
-		if text == "/stop" || text == "/cancel" {
-			ag.CancelActive()
-			continue
-		}
-
-		if ag.HandlePermissionCommand(text) {
-			continue
-		}
-
-		// Global state, not the per-session clone: the hook process reads the saved state file.
-		if text == "/approvals" || text == "/aprobaciones" {
-			_ = sc.writeJSON(agent.Event{
-				Type:      agent.EventTypeChunk,
-				Text:      agent.ApprovalsToggleReply(st.ToggleFeature("mobile_approvals")),
-				Done:      true,
-				SessionID: req.SessionID,
-			})
-			continue
-		}
-
 		sessSt := getSessionState(req.SessionID)
-
-		if text == "/new" || text == "/nuevo" {
-			if sessSt.CurrentEngine == "claude" {
-				sessSt.SetClaudeSession("NEW", "Nuevo chat Claude", sessSt.CurrentCWD)
-			} else {
-				sessSt.SetAgyConversation("NEW", "Nuevo chat independiente", sessSt.CurrentCWD)
-			}
-			_ = sc.writeJSON(agent.Event{
-				Type:      agent.EventTypeChunk,
-				Text:      "Nuevo chat limpio preparado.",
-				Done:      true,
-				SessionID: req.SessionID,
-			})
-			continue
-		}
-
-		if strings.HasPrefix(text, "__options__:") {
-			_ = sc.writeJSON(map[string]any{
-				"type": "options",
-				"data": buildWorkerOptions(cfg, sessSt),
-			})
-			continue
-		}
-
-		if strings.HasPrefix(text, "/cd ") {
-			target := strings.TrimSpace(strings.TrimPrefix(text, "/cd "))
-			resolved := ""
-			for _, p := range projects.ListAvailableProjects(cfg) {
-				if strings.EqualFold(p.Name, target) || p.Path == target {
-					resolved = p.Path
-					break
-				}
-			}
-			if resolved != "" {
-				sessSt.CurrentCWD = resolved
-				if sessSt.CurrentEngine == "claude" {
-					sessSt.SetClaudeSession("NEW", "Nuevo chat Claude", resolved)
-				} else {
-					sessSt.SetAgyConversation("NEW", "Nuevo chat independiente", resolved)
-				}
-				_ = sc.writeJSON(agent.Event{
-					Type:      agent.EventTypeChunk,
-					Text:      "Proyecto cambiado a " + target,
-					Done:      true,
-					SessionID: req.SessionID,
-				})
-			} else {
-				_ = sc.writeJSON(agent.Event{
-					Type:      agent.EventTypeError,
-					Message:   "Proyecto no encontrado: " + target,
-					SessionID: req.SessionID,
-				})
-			}
-			continue
-		}
-
-		if strings.HasPrefix(text, "/model ") {
-			mod := strings.TrimSpace(strings.TrimPrefix(text, "/model "))
-			sessSt.CurrentModel = mod
-			_ = sc.writeJSON(agent.Event{
-				Type:      agent.EventTypeChunk,
-				Text:      "Modelo cambiado a " + mod,
-				Done:      true,
-				SessionID: req.SessionID,
-			})
-			continue
-		}
-
-		if strings.HasPrefix(text, "/resume ") {
-			id := strings.TrimSpace(strings.TrimPrefix(text, "/resume "))
-			if id == "NEW" {
-				if sessSt.CurrentEngine == "claude" {
-					sessSt.SetClaudeSession("NEW", "Nuevo chat Claude", sessSt.CurrentCWD)
-				} else {
-					sessSt.SetAgyConversation("NEW", "Nuevo chat independiente", sessSt.CurrentCWD)
-				}
-				_ = sc.writeJSON(agent.Event{
-					Type:      agent.EventTypeChunk,
-					Text:      "Nuevo chat limpio preparado en " + sessSt.GetCWDShortName(sessSt.CurrentCWD),
-					Done:      true,
-					SessionID: req.SessionID,
-				})
-				continue
-			}
-			if sessSt.CurrentEngine == "claude" {
-				sessSt.SetClaudeSession(id, id, sessSt.CurrentCWD)
-			} else {
-				sessSt.SetAgyConversation(id, id, sessSt.CurrentCWD)
-			}
-			msg := "Sesión reanudada: " + id
-			if preview := chats.GetAgyConversationPreview(id, 4); preview != "" {
-				msg += "\n\n📜 Últimos mensajes:\n" + preview
-			}
-			_ = sc.writeJSON(agent.Event{
-				Type:      agent.EventTypeChunk,
-				Text:      msg,
-				Done:      true,
-				SessionID: req.SessionID,
-			})
+		if commands.Handle(commands.Env{
+			Cfg:       cfg,
+			Agent:     ag,
+			Global:    st,
+			Session:   sessSt,
+			SessionID: req.SessionID,
+			Send:      sc.writeJSON,
+		}, text) {
 			continue
 		}
 
@@ -333,78 +214,5 @@ func sleepWithContext(ctx context.Context, d time.Duration) bool {
 		return false
 	case <-timer.C:
 		return true
-	}
-}
-
-// maxResumeChats caps the resume list sent to the phone.
-const maxResumeChats = 30
-
-func buildWorkerOptions(cfg *config.Config, st *state.BotSessionState) map[string]any {
-	projs := projects.ListAvailableProjects(cfg)
-	type projItem struct {
-		Name string `json:"name"`
-		Path string `json:"path"`
-	}
-	var projList []projItem
-	for _, p := range projs {
-		projList = append(projList, projItem{Name: p.Name, Path: p.Path})
-	}
-
-	type chatItem struct {
-		ID    string `json:"id"`
-		Title string `json:"title"`
-	}
-	var chatList []chatItem
-	chatList = append(chatList, chatItem{ID: "NEW", Title: "➕ Nuevo chat limpio en este proyecto"})
-	if st.CurrentEngine == "claude" {
-		// Filter the full history first: a global top-N cut leaves most projects empty.
-		for _, cs := range chats.ListClaudeSessions(cfg, 0) {
-			if st.CurrentCWD != "" && filepath.Clean(cs.CWD) != filepath.Clean(st.CurrentCWD) {
-				continue
-			}
-			chatList = append(chatList, chatItem{ID: cs.SessionID, Title: cs.Title})
-			if len(chatList) > maxResumeChats {
-				break
-			}
-		}
-	} else {
-		allConvs := chats.ListAgyConversations(cfg, 0)
-		var matching []chatItem
-		for _, c := range allConvs {
-			wsTag := ""
-			isMatch := false
-			// Exact workspace match: a substring test made the home folder match every chat.
-			if st.CurrentCWD != "" && (strings.Contains(c.WorkspaceURIs, "file://"+filepath.Clean(st.CurrentCWD)+`"`) ||
-				strings.Contains(c.WorkspaceURIs, "file://"+filepath.Clean(st.CurrentCWD)+`/"`)) {
-				isMatch = true
-			}
-			if idx := strings.Index(c.WorkspaceURIs, "file://"); idx != -1 {
-				rest := c.WorkspaceURIs[idx+len("file://"):]
-				if end := strings.IndexAny(rest, `"]`); end != -1 {
-					rest = rest[:end]
-				}
-				parts := strings.Split(strings.TrimRight(rest, "/"), "/")
-				if len(parts) > 0 && parts[len(parts)-1] != "" {
-					wsTag = "[" + parts[len(parts)-1] + "] "
-				}
-			}
-			item := chatItem{ID: c.ConversationID, Title: wsTag + c.Title}
-			if isMatch && len(matching) < maxResumeChats {
-				matching = append(matching, item)
-			}
-		}
-		// Only this project's chats: an empty list means the app opens a clean chat directly.
-		chatList = append(chatList, matching...)
-	}
-
-	_, activeModID, _ := models.GetEffectiveModelInfo(cfg, st)
-	return map[string]any{
-		"ok":           true,
-		"engine":       st.CurrentEngine,
-		"active_model": activeModID,
-		"active_cwd":   st.CurrentCWD,
-		"models":       models.GetCatalog(cfg),
-		"projects":     projList,
-		"chats":        chatList,
 	}
 }

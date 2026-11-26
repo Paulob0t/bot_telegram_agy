@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"telegram-paulobot/internal/config"
+	"agente-bot/internal/config"
 )
 
 type AgyConversation struct {
@@ -100,4 +100,11 @@ func GetAgyConversationPreview(convID string, maxMsgs int) string {
 		msgs = msgs[len(msgs)-maxMsgs:]
 	}
 	return strings.Join(msgs, "\n")
+}
+
+// AgyConversationExists reports whether AGY still has the conversation's data file.
+// Its summaries database keeps rows for conversations whose files were deleted.
+func AgyConversationExists(cfg *config.Config, convID string) bool {
+	_, err := os.Stat(filepath.Join(cfg.BaseCLIDir, "conversations", convID+".db"))
+	return err == nil
 }

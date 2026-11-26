@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"telegram-paulobot/internal/config"
+	"agente-bot/internal/config"
 )
 
 type ClaudeQuota struct {
@@ -197,7 +197,7 @@ func LoadCachedOrFetch(cfg *config.Config, maxAge time.Duration) Quotas {
 	return FetchAll(cfg)
 }
 
-func FormatTelegramDashboard(q Quotas) string {
+func FormatDashboard(q Quotas) string {
 	g := q.Antigravity["gemini"]
 	c := q.Antigravity["claude_gpt"]
 

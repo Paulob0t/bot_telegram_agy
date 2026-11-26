@@ -13,14 +13,13 @@ import (
 	"syscall"
 	"time"
 
-	"telegram-paulobot/internal/agent"
-	"telegram-paulobot/internal/bot"
-	"telegram-paulobot/internal/config"
-	"telegram-paulobot/internal/hooks"
-	"telegram-paulobot/internal/relay"
-	"telegram-paulobot/internal/state"
-	"telegram-paulobot/internal/tokens"
-	"telegram-paulobot/internal/transport/mobile"
+	"agente-bot/internal/agent"
+	"agente-bot/internal/config"
+	"agente-bot/internal/hooks"
+	"agente-bot/internal/relay"
+	"agente-bot/internal/state"
+	"agente-bot/internal/tokens"
+	"agente-bot/internal/transport/mobile"
 )
 
 func main() {
@@ -62,7 +61,7 @@ func main() {
 
 	st := state.New(cfg)
 
-	// Subcomandos CLI unificados (0 Python): dialog, stats, hook agy/claude, notify
+	// Subcomandos CLI: dialog, stats, hook agy|claude|claude-perm, notify, mobile-info
 	if args := flag.Args(); len(args) > 0 {
 		switch args[0] {
 		case "dialog", "token-dialog":
@@ -89,7 +88,7 @@ func main() {
 				hooks.RunAgyHook(cfg, st)
 			}
 			return
-		case "notify", "notify-telegram":
+		case "notify":
 			os.Exit(hooks.RunNotifyCLI(cfg, st, args[1:]))
 		case "mobile-info":
 			fmt.Println(mobile.FormatConnectionInfo(cfg))
@@ -134,12 +133,5 @@ func main() {
 			go relay.RunWorker(ctx, cfg, st, ag, hubSecret, gistToken, gistID)
 		}
 	}
-	wsSrv := mobile.NewServer(cfg, ag, st)
-	if !cfg.EnableTelegram {
-		wsSrv.Run(ctx)
-		return
-	}
-
-	go wsSrv.Run(ctx)
-	bot.New(cfg, st, ag).Run(ctx)
+	mobile.NewServer(cfg, ag, st).Run(ctx)
 }

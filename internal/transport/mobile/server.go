@@ -11,21 +11,17 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
-	"telegram-paulobot/internal/agent"
-	"telegram-paulobot/internal/chats"
-	"telegram-paulobot/internal/config"
-	"telegram-paulobot/internal/guard"
-	"telegram-paulobot/internal/models"
-	"telegram-paulobot/internal/obsidian"
-	"telegram-paulobot/internal/projects"
-	"telegram-paulobot/internal/state"
-	"telegram-paulobot/internal/tokens"
+	"agente-bot/internal/agent"
+	"agente-bot/internal/commands"
+	"agente-bot/internal/config"
+	"agente-bot/internal/obsidian"
+	"agente-bot/internal/state"
+	"agente-bot/internal/uploads"
 )
 
 const (
@@ -257,7 +253,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		fn = fmt.Sprintf("upload_%d", time.Now().Unix())
 	}
 
-	uploadsDir := guard.PrepareUploadsDir(s.cfg.HomeDir)
+	uploadsDir := uploads.PrepareDir(s.cfg.HomeDir)
 	cachePath := filepath.Join(uploadsDir, fmt.Sprintf("%d_%s", time.Now().Unix(), fn))
 	out, err := os.Create(cachePath)
 	if err != nil {
@@ -298,7 +294,7 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(s.scanPCEnvironment())
+	_ = json.NewEncoder(w).Encode(commands.Scan(s.cfg, s.st))
 }
 
 func (s *Server) handleOptions(w http.ResponseWriter, r *http.Request) {
@@ -306,74 +302,8 @@ func (s *Server) handleOptions(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no autorizado", http.StatusUnauthorized)
 		return
 	}
-	projs := projects.ListAvailableProjects(s.cfg)
-	type projItem struct {
-		Name string `json:"name"`
-		Path string `json:"path"`
-	}
-	var projList []projItem
-	for i, p := range projs {
-		if i >= 20 {
-			break
-		}
-		projList = append(projList, projItem{Name: p.Name, Path: p.Path})
-	}
-
-	type chatItem struct {
-		ID    string `json:"id"`
-		Title string `json:"title"`
-	}
-	var chatList []chatItem
-	if s.st.CurrentEngine == "claude" {
-		for _, cs := range chats.ListClaudeSessions(s.cfg, 15) {
-			chatList = append(chatList, chatItem{ID: cs.SessionID, Title: cs.Title})
-		}
-	} else {
-		for _, c := range chats.ListAgyConversations(s.cfg, 15) {
-			chatList = append(chatList, chatItem{ID: c.ConversationID, Title: c.Title})
-		}
-	}
-
-	_, activeModID, _ := models.GetEffectiveModelInfo(s.cfg, s.st)
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"ok":           true,
-		"engine":       s.st.CurrentEngine,
-		"active_model": activeModID,
-		"active_cwd":   s.st.CurrentCWD,
-		"models":       models.GetCatalog(s.cfg),
-		"projects":     projList,
-		"chats":        chatList,
-	})
-}
-
-func (s *Server) scanPCEnvironment() map[string]any {
-	projs := projects.ListAvailableProjects(s.cfg)
-	var projNames []string
-	for _, p := range projs {
-		projNames = append(projNames, p.Name)
-	}
-
-	var clis []string
-	for _, bin := range []string{"agy", "claude", "git", "go", "flutter", "node"} {
-		if _, err := exec.LookPath(bin); err == nil {
-			clis = append(clis, bin)
-		}
-	}
-
-	effDisp, _, _ := models.GetEffectiveModelInfo(s.cfg, s.st)
-	return map[string]any{
-		"ok":           true,
-		"engine":       s.st.CurrentEngine,
-		"model":        effDisp,
-		"cwd":          s.st.CurrentCWD,
-		"cwd_short":    s.st.GetCWDShortName(s.st.CurrentCWD),
-		"projects":     projNames,
-		"total_projs":  len(projs),
-		"clis":         clis,
-		"tailscale_ip": config.DetectTailscaleIPv4(),
-		"telegram_on":  s.cfg.EnableTelegram,
-	}
+	_ = json.NewEncoder(w).Encode(commands.BuildOptions(s.cfg, s.st))
 }
 
 func (s *Server) apkFilePath() string {
@@ -515,16 +445,14 @@ func (s *Server) processClientMessage(ctx context.Context, ws *wsConn, raw []byt
 		return
 	}
 
-	if text == "/stop" || text == "/cancel" {
-		s.agent.CancelActive()
-		return
-	}
-
-	if s.agent.HandlePermissionCommand(text) {
-		return
-	}
-
-	if strings.HasPrefix(text, "/") && s.handleMobileCommand(ws, text) {
+	if commands.Handle(commands.Env{
+		Cfg:       s.cfg,
+		Agent:     s.agent,
+		Global:    s.st,
+		Session:   s.st,
+		SessionID: req.SessionID,
+		Send:      ws.WriteJSON,
+	}, text) {
 		return
 	}
 
@@ -532,151 +460,6 @@ func (s *Server) processClientMessage(ctx context.Context, ws *wsConn, raw []byt
 	go func() {
 		_, _ = s.agent.Execute(ctx, req, nil)
 	}()
-}
-
-func (s *Server) handleMobileCommand(ws *wsConn, rawText string) bool {
-	fields := strings.Fields(rawText)
-	if len(fields) == 0 {
-		return false
-	}
-	cmd := strings.ToLower(fields[0])
-	arg := strings.TrimSpace(strings.TrimPrefix(rawText, fields[0]))
-
-	reply := func(msg string) {
-		_ = ws.WriteJSON(agent.Event{
-			Type: agent.EventTypeChunk,
-			Text: msg,
-			Done: true,
-		})
-	}
-
-	switch cmd {
-	case "/status", "/start":
-		effDisp, _, ctxWin := models.GetEffectiveModelInfo(s.cfg, s.st)
-		summary := projects.FormatActiveCWDSummary(s.st.CurrentCWD)
-		reply(fmt.Sprintf(
-			"◆ Motor: %s\n• Modelo: %s (%s · %dk ctx)\n• Proyecto:\n%s",
-			s.st.CurrentEngine, effDisp, strings.ToUpper(s.st.CurrentEffort), ctxWin/1000, summary,
-		))
-		return true
-
-	case "/approvals", "/aprobaciones":
-		reply(agent.ApprovalsToggleReply(s.st.ToggleFeature("mobile_approvals")))
-		return true
-
-	case "/agy":
-		s.st.CurrentEngine = "agy"
-		_ = s.st.Save()
-		reply("Motor cambiado a Antigravity (AGY).")
-		return true
-
-	case "/claude":
-		s.st.CurrentEngine = "claude"
-		_ = s.st.Save()
-		reply("Motor cambiado a Claude Code.")
-		return true
-
-	case "/new", "/nuevo":
-		if s.st.CurrentEngine == "claude" {
-			s.st.SetClaudeSession("NEW", "Nuevo chat Claude", s.st.CurrentCWD)
-		} else {
-			s.st.SetAgyConversation("NEW", "Nuevo chat independiente", s.st.CurrentCWD)
-		}
-		reply("Nuevo chat preparado en " + s.st.GetCWDShortName(s.st.CurrentCWD))
-		return true
-
-	case "/project", "/cd":
-		if arg != "" {
-			for _, p := range projects.ListAvailableProjects(s.cfg) {
-				if strings.EqualFold(p.Name, arg) || strings.Contains(strings.ToLower(p.Name), strings.ToLower(arg)) {
-					s.st.SetCWD(p.Path)
-					reply("Proyecto cambiado:\n" + projects.FormatActiveCWDSummary(p.Path))
-					return true
-				}
-			}
-		}
-		var sb strings.Builder
-		sb.WriteString("Proyecto actual: " + s.st.GetCWDShortName(s.st.CurrentCWD) + "\n\nProyectos recientes (escribe `/cd <nombre>`):")
-		for i, p := range projects.ListAvailableProjects(s.cfg) {
-			if i >= 10 {
-				break
-			}
-			sb.WriteString("\n• " + p.Name)
-		}
-		reply(sb.String())
-		return true
-
-	case "/model", "/modelo":
-		if arg != "" {
-			s.st.CurrentModel = arg
-			_ = s.st.Save()
-			effDisp, _, _ := models.GetEffectiveModelInfo(s.cfg, s.st)
-			reply("Modelo cambiado a: " + effDisp)
-			return true
-		}
-		effDisp, _, _ := models.GetEffectiveModelInfo(s.cfg, s.st)
-		var sb strings.Builder
-		sb.WriteString("Modelo actual: " + effDisp + "\n\nModelos (escribe `/model <id>`):")
-		for i, m := range models.GetCatalog(s.cfg) {
-			if i >= 12 {
-				break
-			}
-			sb.WriteString(fmt.Sprintf("\n• %s (`%s`)", m.Name, m.ID))
-		}
-		reply(sb.String())
-		return true
-
-	case "/resume", "/chats":
-		if arg != "" {
-			if s.st.CurrentEngine == "claude" {
-				s.st.SetClaudeSession(arg, arg, s.st.CurrentCWD)
-				reply("Chat activo cambiado.")
-			} else {
-				title := chats.GetAgyConversationTitle(s.cfg, arg)
-				s.st.SetAgyConversation(arg, title, "")
-				msg := "Chat activo: " + title
-				if preview := chats.GetAgyConversationPreview(arg, 4); preview != "" {
-					msg += "\n\nÚltimos mensajes:\n" + preview
-				}
-				reply(msg)
-			}
-			return true
-		}
-		var sb strings.Builder
-		if s.st.CurrentEngine == "claude" {
-			sb.WriteString("Sesiones recientes (Claude):")
-			for _, cs := range chats.ListClaudeSessions(s.cfg, 6) {
-				sb.WriteString("\n• " + cs.Title)
-			}
-		} else {
-			sb.WriteString("Chats recientes (AGY):")
-			for _, c := range chats.ListAgyConversations(s.cfg, 6) {
-				sb.WriteString("\n• " + c.Title)
-			}
-		}
-		reply(sb.String())
-		return true
-
-	case "/scan":
-		sc := s.scanPCEnvironment()
-		projs, _ := sc["projects"].([]string)
-		clis, _ := sc["clis"].([]string)
-		reply(fmt.Sprintf(
-			"Escaneo de PC completado:\n• Motor: %s · Modelo: %v\n• Proyecto activo: %v\n• Proyectos (%v): %s\n• CLIs detectados: %s",
-			sc["engine"], sc["model"], sc["cwd_short"], sc["total_projs"], strings.Join(projs, ", "), strings.Join(clis, ", "),
-		))
-		return true
-
-	case "/tokens", "/usage":
-		go func() {
-			q := tokens.FetchAll(s.cfg)
-			_ = tokens.WriteWaybarJSON(s.cfg)
-			reply(tokens.FormatTelegramDashboard(q))
-		}()
-		return true
-	}
-
-	return false
 }
 
 func FormatConnectionInfo(cfg *config.Config) string {

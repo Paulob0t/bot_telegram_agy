@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"telegram-paulobot/internal/config"
+	"agente-bot/internal/config"
 )
 
 const chunkBytes = 128 * 1024

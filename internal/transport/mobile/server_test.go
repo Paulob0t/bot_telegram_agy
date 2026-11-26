@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
-	"telegram-paulobot/internal/agent"
-	"telegram-paulobot/internal/config"
-	"telegram-paulobot/internal/executor"
-	"telegram-paulobot/internal/state"
+	"agente-bot/internal/agent"
+	"agente-bot/internal/config"
+	"agente-bot/internal/executor"
+	"agente-bot/internal/state"
 )
 
 func sendMaskedClientFrame(conn net.Conn, opcode byte, payload []byte) error {

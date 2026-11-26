@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"telegram-paulobot/internal/config"
-	"telegram-paulobot/internal/executor"
-	"telegram-paulobot/internal/state"
+	"agente-bot/internal/config"
+	"agente-bot/internal/executor"
+	"agente-bot/internal/state"
 )
 
 func TestServiceStateTransitionsAndChunks(t *testing.T) {

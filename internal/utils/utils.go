@@ -37,7 +37,7 @@ func GetGitBranch(dir string) string {
 	return ref
 }
 
-// SanitizeStreamingMarkdown trunca y cierra bloques ``` abiertos para que Telegram no falle al renderizar.
+// SanitizeStreamingMarkdown trunca y cierra bloques ``` abiertos para que el Markdown de la app no se rompa al renderizar.
 func SanitizeStreamingMarkdown(text string, maxLen int) string {
 	if text == "" {
 		return ""

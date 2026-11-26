@@ -13,10 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"telegram-paulobot/internal/config"
-	"telegram-paulobot/internal/desktop"
-	"telegram-paulobot/internal/state"
-	"telegram-paulobot/internal/telegram"
+	"agente-bot/internal/config"
+	"agente-bot/internal/desktop"
+	"agente-bot/internal/state"
 )
 
 var (
@@ -50,7 +49,7 @@ func RunAgyHook(cfg *config.Config, st *state.BotSessionState) {
 		desktop.Notify("Antigravity", wsName)
 	}
 
-	if os.Getenv("AGY_FROM_TELEGRAM") == "1" || !st.FeatureEnabled("notify_telegram") {
+	if !shouldNotifyMobile(st) {
 		return
 	}
 
@@ -59,22 +58,12 @@ func RunAgyHook(cfg *config.Config, st *state.BotSessionState) {
 		title = "Tarea finalizada"
 	}
 	icon := "✓"
+	body = formatFullResponse(body)
 	if payload.Error != "" {
-		icon = "⚠️"
+		icon = "⚠"
+		body = strings.TrimSpace(body + "\n\nError: " + clip(payload.Error, 120))
 	}
-	msg := fmt.Sprintf("%s *[AGY] %s* · `%s`", icon, title, wsName)
-	if cleanBody := formatFullResponse(body); cleanBody != "" {
-		msg += "\n\n" + cleanBody
-	}
-	if payload.Error != "" {
-		msg += fmt.Sprintf("\n`%s`", clip(payload.Error, 120))
-	}
-
-	if cfg.EnableTelegram {
-		tg := telegram.New(cfg.Token)
-		_, _ = tg.SendMessage(cfg.AuthorizedUserID, msg, nil)
-	}
-	notifyMobileApp(cfg, fmt.Sprintf("✓ [AGY] %s · %s", title, wsName), formatFullResponse(body))
+	notifyMobileApp(cfg, fmt.Sprintf("%s [AGY] %s · %s", icon, title, wsName), body)
 }
 
 func RunClaudeHook(cfg *config.Config, st *state.BotSessionState) {
@@ -107,7 +96,7 @@ func RunClaudeHook(cfg *config.Config, st *state.BotSessionState) {
 		desktop.Notify("Claude", wsName)
 	}
 
-	if os.Getenv("CLAUDE_FROM_TELEGRAM") == "1" || !st.FeatureEnabled("notify_telegram") {
+	if !shouldNotifyMobile(st) {
 		return
 	}
 
@@ -119,20 +108,13 @@ func RunClaudeHook(cfg *config.Config, st *state.BotSessionState) {
 	if !strings.Contains(transcriptPath, ".claude") {
 		engineLabel = "AGY"
 	}
-	msg := fmt.Sprintf("✓ *[%s] %s* · `%s`", engineLabel, title, wsName)
-	if cleanBody := formatFullResponse(body); cleanBody != "" {
-		msg += "\n\n" + cleanBody
-	}
-
-	if cfg.EnableTelegram {
-		tg := telegram.New(cfg.Token)
-		_, _ = tg.SendMessage(cfg.AuthorizedUserID, msg, nil)
-	}
 	notifyMobileApp(cfg, fmt.Sprintf("✓ [%s] %s · %s", engineLabel, title, wsName), formatFullResponse(body))
 }
 
+// RunNotifyCLI sends a manual notification to the app:
+// `agente-bot notify "Título" [cuerpo...]`, with optional piped stdin as extra body.
 func RunNotifyCLI(cfg *config.Config, st *state.BotSessionState, args []string) int {
-	if !st.FeatureEnabled("notify_telegram") {
+	if !st.FeatureEnabled("notify_mobile") {
 		return 0
 	}
 	var stdinText string
@@ -144,28 +126,26 @@ func RunNotifyCLI(cfg *config.Config, st *state.BotSessionState, args []string) 
 		return 1
 	}
 
-	var msg string
-	switch {
-	case len(args) == 1 && stdinText != "":
-		msg = fmt.Sprintf("🔔 *%s*\n\n```\n%s\n```", args[0], clip(stdinText, 3500))
-	case len(args) == 1:
-		msg = fmt.Sprintf("🔔 %s", args[0])
-	case len(args) >= 2:
-		body := strings.Join(args[1:], " ")
-		if stdinText != "" {
-			body += fmt.Sprintf("\n\n```\n%s\n```", clip(stdinText, 3000))
-		}
-		msg = fmt.Sprintf("🔔 *%s*\n\n%s", args[0], body)
-	default:
-		msg = fmt.Sprintf("🔔 *Notificación de PC:*\n\n```\n%s\n```", clip(stdinText, 3800))
+	title := "Notificación de PC"
+	if len(args) > 0 {
+		title = args[0]
 	}
-
-	tg := telegram.New(cfg.Token)
-	_, err := tg.SendMessage(cfg.AuthorizedUserID, msg, nil)
-	if err != nil {
+	parts := []string{}
+	if len(args) > 1 {
+		parts = append(parts, strings.Join(args[1:], " "))
+	}
+	if stdinText != "" {
+		parts = append(parts, clip(stdinText, 3500))
+	}
+	if !notifyMobileApp(cfg, title, strings.Join(parts, "\n\n")) {
 		return 1
 	}
 	return 0
+}
+
+// shouldNotifyMobile skips runs started by the bot itself: the app already streams them live.
+func shouldNotifyMobile(st *state.BotSessionState) bool {
+	return os.Getenv("AGENTE_BOT_RUN") != "1" && st.FeatureEnabled("notify_mobile")
 }
 
 func extractAgyTranscript(path string) (string, string) {
@@ -276,23 +256,27 @@ func clip(s string, limit int) string {
 	return strings.TrimRight(string(runes[:limit]), " ,;:.") + "…"
 }
 
-func notifyMobileApp(cfg *config.Config, title, body string) {
+// notifyMobileApp posts to the local mobile server, which relays to every connected app.
+func notifyMobileApp(cfg *config.Config, title, body string) bool {
 	tok := strings.TrimSpace(cfg.MobileWSToken)
 	if tok == "" {
-		return
+		return false
 	}
 	payload, _ := json.Marshal(map[string]string{
 		"title": title,
 		"body":  body,
 	})
-	req, err := http.NewRequest(http.MethodPost, "http://127.0.0.1:8080/notify", bytes.NewReader(payload))
+	req, err := http.NewRequest(http.MethodPost, cfg.LocalMobileURL()+"/notify", bytes.NewReader(payload))
 	if err != nil {
-		return
+		return false
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+tok)
 	client := &http.Client{Timeout: 2 * time.Second}
-	if resp, err := client.Do(req); err == nil {
-		_ = resp.Body.Close()
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
 	}
+	_ = resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
 }

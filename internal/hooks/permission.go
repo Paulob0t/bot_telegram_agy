@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"telegram-paulobot/internal/config"
-	"telegram-paulobot/internal/state"
+	"agente-bot/internal/config"
+	"agente-bot/internal/state"
 )
 
 // approvalTools are the Claude tools that change the machine; read-only tools never ask.
@@ -50,7 +50,7 @@ func RunClaudePermissionHook(cfg *config.Config, st *state.BotSessionState) {
 		"detail":    describeToolInput(payload.ToolName, payload.ToolInput),
 		"workspace": filepath.Base(strings.TrimRight(payload.Cwd, `/\`)),
 	})
-	req, err := http.NewRequest(http.MethodPost, "http://127.0.0.1:8080/permission", bytes.NewReader(reqBody))
+	req, err := http.NewRequest(http.MethodPost, cfg.LocalMobileURL()+"/permission", bytes.NewReader(reqBody))
 	if err != nil {
 		return
 	}

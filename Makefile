@@ -1,4 +1,4 @@
-.PHONY: build-pc build-android test
+.PHONY: build-pc build-android test install
 
 BINARY_NAME := agente-bot
 
@@ -10,3 +10,9 @@ build-android:
 
 test:
 	go test ./...
+
+# Installs the binary the Claude/AGY hooks call and links the .env they read.
+install:
+	go build -o $(HOME)/.local/bin/$(BINARY_NAME) ./cmd/bot
+	mkdir -p $(HOME)/.config/agente-bot
+	ln -sf $(CURDIR)/.env $(HOME)/.config/agente-bot/.env

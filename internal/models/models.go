@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"telegram-paulobot/internal/config"
-	"telegram-paulobot/internal/state"
+	"agente-bot/internal/config"
+	"agente-bot/internal/state"
 )
 
 const (
