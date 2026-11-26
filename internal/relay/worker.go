@@ -119,7 +119,7 @@ func connectAndServeWorker(ctx context.Context, cfg *config.Config, st *state.Bo
 	defer unsub()
 
 	getSessionState := func(sid string) *state.BotSessionState {
-		return chatSessions.get(st, sid)
+		return sessionStore(st).Get(sid)
 	}
 
 	for {
@@ -171,28 +171,16 @@ func connectAndServeWorker(ctx context.Context, cfg *config.Config, st *state.Bo
 	}
 }
 
-// chatSessions outlives each hub connection: a phone or tunnel drop must not
-// reset the project and conversation of the app's open chats.
-var chatSessions = sessionRegistry{byID: map[string]*state.BotSessionState{}}
+// chatSessions outlives each hub connection and, through its file, restarts:
+// a phone, tunnel or service restart must not reset the app's open chats.
+var (
+	chatSessionsOnce sync.Once
+	chatSessions     *state.SessionStore
+)
 
-type sessionRegistry struct {
-	mu   sync.Mutex
-	byID map[string]*state.BotSessionState
-}
-
-func (r *sessionRegistry) get(global *state.BotSessionState, sid string) *state.BotSessionState {
-	sid = strings.TrimSpace(sid)
-	if sid == "" || sid == "default" {
-		return global
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if existing, ok := r.byID[sid]; ok {
-		return existing
-	}
-	sess := global.NewSession()
-	r.byID[sid] = sess
-	return sess
+func sessionStore(global *state.BotSessionState) *state.SessionStore {
+	chatSessionsOnce.Do(func() { chatSessions = state.NewSessionStore(global) })
+	return chatSessions
 }
 
 func buildWorkerWSURL(hubURL string) (string, error) {

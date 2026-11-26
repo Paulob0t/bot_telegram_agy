@@ -33,8 +33,12 @@ type BotSessionState struct {
 	UpdatedAt                float64           `json:"updated_at"`
 	LastUsageData            map[string]any    `json:"-"`
 
-	// ephemeral states live only in memory; see NewSession.
+	// ephemeral states never write the global state file; see NewSession.
 	ephemeral bool
+	// onSave persists an ephemeral state elsewhere (SessionStore).
+	onSave func()
+	// LastUsed lets SessionStore drop chats nobody touched for a week.
+	LastUsed time.Time `json:"last_used,omitempty"`
 }
 
 func New(cfg *config.Config) *BotSessionState {
@@ -149,10 +153,16 @@ func (s *BotSessionState) NewSession() *BotSessionState {
 
 func (s *BotSessionState) Save() error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.ephemeral {
+		s.LastUsed = time.Now()
+		hook := s.onSave
+		s.mu.Unlock()
+		if hook != nil {
+			hook()
+		}
 		return nil
 	}
+	defer s.mu.Unlock()
 
 	s.UpdatedAt = float64(time.Now().UnixNano()) / 1e9
 	data, err := json.MarshalIndent(s, "", "  ")
