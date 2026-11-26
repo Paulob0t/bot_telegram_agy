@@ -99,6 +99,7 @@ func RunPromptWithEvents(ctx context.Context, cfg *config.Config, st *state.BotS
 	var envExtra []string
 	isClaude := st.CurrentEngine == "claude"
 	usedConvID := st.CurrentConversationID
+	runStart := time.Now().Add(-time.Second)
 
 	if isClaude {
 		bin = cfg.ClaudeBin
@@ -148,6 +149,7 @@ func RunPromptWithEvents(ctx context.Context, cfg *config.Config, st *state.BotS
 		if convID != "" && convID != "LATEST" && convID != "NEW" && !chats.AgyConversationExists(cfg, convID) {
 			// Deleted conversation: AGY would warn and ignore the flag, so start clean instead.
 			st.CurrentConversationID = "NEW"
+			usedConvID = "NEW"
 		}
 		if st.CurrentConversationID == "" || st.CurrentConversationID == "LATEST" {
 			args = append(args, "-c")
@@ -350,9 +352,8 @@ func RunPromptWithEvents(ctx context.Context, cfg *config.Config, st *state.BotS
 
 	if !isClaude {
 		if usedConvID == "" || usedConvID == "NEW" || usedConvID == "LATEST" {
-			latest := chats.ListAgyConversations(cfg, 1)
-			if len(latest) > 0 {
-				st.SetAgyConversation(latest[0].ConversationID, "💬 "+latest[0].Title, execCWD)
+			if id := chats.NewestAgyConversationSince(cfg, runStart); id != "" {
+				st.SetAgyConversation(id, "💬 "+chats.GetAgyConversationTitle(cfg, id), execCWD)
 			}
 		} else {
 			st.SetAgyConversation(usedConvID, st.CurrentConversationTitle, execCWD)

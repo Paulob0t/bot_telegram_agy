@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"agente-bot/internal/config"
 )
@@ -107,4 +108,28 @@ func GetAgyConversationPreview(convID string, maxMsgs int) string {
 func AgyConversationExists(cfg *config.Config, convID string) bool {
 	_, err := os.Stat(filepath.Join(cfg.BaseCLIDir, "conversations", convID+".db"))
 	return err == nil
+}
+
+// NewestAgyConversationSince returns the conversation whose data file changed
+// last at or after since. A fresh chat has no summary title yet, so the
+// summaries database cannot identify it.
+func NewestAgyConversationSince(cfg *config.Config, since time.Time) string {
+	entries, err := os.ReadDir(filepath.Join(cfg.BaseCLIDir, "conversations"))
+	if err != nil {
+		return ""
+	}
+	var bestID string
+	var bestTime time.Time
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".db") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil || info.ModTime().Before(since) || !info.ModTime().After(bestTime) {
+			continue
+		}
+		bestID, bestTime = strings.TrimSuffix(name, ".db"), info.ModTime()
+	}
+	return bestID
 }

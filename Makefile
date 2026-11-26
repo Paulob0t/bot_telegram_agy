@@ -14,5 +14,6 @@ test:
 # Installs the binary the Claude/AGY hooks call and links the .env they read.
 install:
 	go build -o $(HOME)/.local/bin/$(BINARY_NAME) ./cmd/bot
+	go build -o $(CURDIR)/$(BINARY_NAME) ./cmd/bot
 	mkdir -p $(HOME)/.config/agente-bot
 	ln -sf $(CURDIR)/.env $(HOME)/.config/agente-bot/.env
