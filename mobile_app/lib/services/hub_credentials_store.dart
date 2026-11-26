@@ -69,7 +69,10 @@ class HubCredentialsStore {
   }
 
   static Future<void> save(HubCredentials creds) async {
-    await _storage.write(key: _kEnabled, value: creds.enabled ? 'true' : 'false');
+    await _storage.write(
+      key: _kEnabled,
+      value: creds.enabled ? 'true' : 'false',
+    );
     await _storage.write(key: _kGistToken, value: creds.gistToken.trim());
     await _storage.write(key: _kGistId, value: creds.gistId.trim());
     await _storage.write(key: _kHubSecret, value: creds.hubSecret.trim());

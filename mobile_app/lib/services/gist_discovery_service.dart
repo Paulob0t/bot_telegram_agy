@@ -1,4 +1,5 @@
 import 'dart:convert';
+
 import 'package:http/http.dart' as http;
 
 /// Descubre dinámicamente la URL activa del Hub consultando un GitHub Gist privado.
@@ -7,7 +8,8 @@ class GistDiscoveryService {
 
   final http.Client _client;
 
-  GistDiscoveryService({http.Client? client}) : _client = client ?? http.Client();
+  GistDiscoveryService({http.Client? client})
+    : _client = client ?? http.Client();
 
   /// Consulta `GET https://api.github.com/gists/<gistId>` y extrae `hub_url` de `hub_config.json`.
   Future<String> fetchActiveHubUrl({
@@ -21,13 +23,15 @@ class GistDiscoveryService {
     }
 
     final uri = Uri.parse('https://api.github.com/gists/$cleanId');
-    final resp = await _client.get(
-      uri,
-      headers: {
-        'Authorization': 'Bearer $cleanToken',
-        'Accept': 'application/vnd.github+json',
-      },
-    ).timeout(const Duration(seconds: 10));
+    final resp = await _client
+        .get(
+          uri,
+          headers: {
+            'Authorization': 'Bearer $cleanToken',
+            'Accept': 'application/vnd.github+json',
+          },
+        )
+        .timeout(const Duration(seconds: 10));
 
     if (resp.statusCode < 200 || resp.statusCode >= 300) {
       throw Exception('GitHub Gist HTTP ${resp.statusCode}');
@@ -61,6 +65,8 @@ class GistDiscoveryService {
     final basePath = parsed.path.endsWith('/')
         ? parsed.path.substring(0, parsed.path.length - 1)
         : parsed.path;
-    return parsed.replace(scheme: scheme, path: '$basePath/ws/client').toString();
+    return parsed
+        .replace(scheme: scheme, path: '$basePath/ws/client')
+        .toString();
   }
 }

@@ -4,16 +4,21 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
+
 import '../features/avatar3d/models/avatar3d_state.dart';
 import '../models/agent_event.dart';
 import 'gist_discovery_service.dart';
 import 'hub_credentials_store.dart';
+import 'chat_history_store.dart';
 import 'notifications.dart';
+import 'pc_http_api.dart';
 
-const int currentAppBuildNumber = int.fromEnvironment('APP_BUILD', defaultValue: 25);
+const int currentAppBuildNumber = int.fromEnvironment(
+  'APP_BUILD',
+  defaultValue: 25,
+);
 
 /// Sesión aislada (proyecto + resume/chat) con su propio historial y TTL de 1h.
 class SessionEntry {
@@ -33,11 +38,10 @@ class SessionEntry {
     List<ChatMessage>? messages,
     this.isWorking = false,
     this.hasUnread = false,
-  })  : lastActivity = lastActivity ?? DateTime.now(),
-        messages = messages ?? [];
+  }) : lastActivity = lastActivity ?? DateTime.now(),
+       messages = messages ?? [];
 
-  String get displayLabel =>
-      project.isNotEmpty ? '$project · $title' : title;
+  String get displayLabel => project.isNotEmpty ? '$project · $title' : title;
 }
 
 /// Cliente WebSocket resiliente con reconexión exponencial y sincronización
@@ -61,7 +65,6 @@ class AgyWsClient extends ChangeNotifier {
   final List<ChatMessage> _notifications = [];
   final List<PermissionRequest> _pendingPermissions = [];
   int _unreadNotifications = 0;
-  String? _activeStreamingMsgId;
   String? _lastError;
   bool isAppInForeground = true;
   HubCredentials? _hubCreds;
@@ -86,10 +89,12 @@ class AgyWsClient extends ChangeNotifier {
     _optionsCompleter?.completeError(Exception('cancelled'));
     final c = Completer<Map<String, dynamic>>();
     _optionsCompleter = c;
-    _socket!.add(jsonEncode({
-      'text': '__options__:$cmd',
-      'session_id': _activeSessionId ?? 'default',
-    }));
+    _socket!.add(
+      jsonEncode({
+        'text': '__options__:$cmd',
+        'session_id': _activeSessionId ?? 'default',
+      }),
+    );
     try {
       return await c.future.timeout(const Duration(seconds: 8));
     } catch (_) {
@@ -115,20 +120,22 @@ class AgyWsClient extends ChangeNotifier {
     this.connectTimeout = const Duration(seconds: 5),
     this.pingInterval = const Duration(seconds: 20),
     this.maxBackoffSeconds = 30,
-  })  : _wsUrl = wsUrl.trim(),
-        _bearerToken = bearerToken.trim(),
-        _userId = userId {
+  }) : _wsUrl = wsUrl.trim(),
+       _bearerToken = bearerToken.trim(),
+       _userId = userId {
     unawaited(_loadLocalHistory());
   }
 
   String get wsUrl => _wsUrl;
   String get bearerToken => _bearerToken;
-  bool get isConnected => _socket != null && _socket!.readyState == WebSocket.open;
+  bool get isConnected =>
+      _socket != null && _socket!.readyState == WebSocket.open;
   bool get isConnecting => _isConnecting;
   int get retryAttempt => _retryAttempt;
   CharacterState get characterState => _characterState;
 
   AgentActivity _activity = AgentActivity.idle;
+
   /// A pending tool approval outranks whatever the PC reports: the agent is blocked on us.
   AgentActivity get activity => _pendingPermissions.isEmpty
       ? _activity
@@ -147,10 +154,12 @@ class AgyWsClient extends ChangeNotifier {
   bool respondPermission(String id, bool allow) {
     if (!isConnected) return false;
     try {
-      _socket!.add(jsonEncode({
-        'text': '__perm__:$id:${allow ? 'allow' : 'deny'}',
-        'session_id': _activeSessionId ?? 'default',
-      }));
+      _socket!.add(
+        jsonEncode({
+          'text': '__perm__:$id:${allow ? 'allow' : 'deny'}',
+          'session_id': _activeSessionId ?? 'default',
+        }),
+      );
     } catch (_) {
       return false;
     }
@@ -159,6 +168,7 @@ class AgyWsClient extends ChangeNotifier {
     notifyListeners();
     return true;
   }
+
   int get unreadNotifications => _unreadNotifications;
   String? get lastError => _lastError;
   String get hubStatusText => _hubStatusText;
@@ -170,7 +180,9 @@ class AgyWsClient extends ChangeNotifier {
   void setDebugMode(bool enabled) {
     _debugMode = enabled;
     if (enabled) {
-      _addDebugLog('Debug activado (worker: ${_activeWorker.isEmpty ? "?" : _activeWorker})');
+      _addDebugLog(
+        'Debug activado (worker: ${_activeWorker.isEmpty ? "?" : _activeWorker})',
+      );
     }
     notifyListeners();
   }
@@ -194,12 +206,14 @@ class AgyWsClient extends ChangeNotifier {
   void _addDebugLog(String line) {
     if (!_debugMode) return;
     final now = DateTime.now();
-    final ts = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}';
+    final ts =
+        '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}';
     _debugLogs.add('[$ts] $line');
     if (_debugLogs.length > 80) {
       _debugLogs.removeAt(0);
     }
   }
+
   List<SessionEntry> get sessions {
     _pruneIdleSessions();
     return List.unmodifiable(_sessions);
@@ -214,7 +228,7 @@ class AgyWsClient extends ChangeNotifier {
   }
 
   void _pruneIdleSessions() {
-    final cutoff = DateTime.now().subtract(const Duration(hours: 1));
+    final cutoff = DateTime.now().subtract(const Duration(hours: 24));
     _sessions.removeWhere((s) => s.lastActivity.isBefore(cutoff));
     if (_activeSessionId != null &&
         !_sessions.any((s) => s.id == _activeSessionId)) {
@@ -245,9 +259,7 @@ class AgyWsClient extends ChangeNotifier {
         title: 'Chat inicial',
       )..messages.addAll(_messages);
       _sessions.insert(0, defEntry);
-      if (_streamingTargetSessionId == null) {
-        _streamingTargetSessionId = 'default';
-      }
+      _streamingTargetSessionId ??= 'default';
     }
     final existingIdx = _sessions.indexWhere((s) => s.id == id);
     if (existingIdx >= 0) {
@@ -264,7 +276,7 @@ class AgyWsClient extends ChangeNotifier {
       _activeSessionId = entry.id;
       _messages.clear();
     }
-    _activeStreamingMsgId = null;
+    unawaited(_saveLocalHistory());
     notifyListeners();
   }
 
@@ -273,9 +285,9 @@ class AgyWsClient extends ChangeNotifier {
     if (_activeSessionId == id) {
       _activeSessionId = null;
       _messages.clear();
-      _activeStreamingMsgId = null;
       stopExecution();
     }
+    unawaited(_saveLocalHistory());
     notifyListeners();
   }
 
@@ -285,7 +297,6 @@ class AgyWsClient extends ChangeNotifier {
   /// Limpia los mensajes locales (al cambiar de proyecto o sesión /resume).
   void clearMessages() {
     _messages.clear();
-    _activeStreamingMsgId = null;
     notifyListeners();
   }
 
@@ -351,17 +362,13 @@ class AgyWsClient extends ChangeNotifier {
         final clientWsUrl = GistDiscoveryService.toClientWsUrl(hubUrl);
         ws = await WebSocket.connect(
           clientWsUrl,
-          headers: {
-            'Authorization': 'Bearer ${_hubCreds!.hubSecret}',
-          },
+          headers: {'Authorization': 'Bearer ${_hubCreds!.hubSecret}'},
         ).timeout(connectTimeout);
         _hubStatusText = 'Conectado al Hub';
       } else {
         ws = await WebSocket.connect(
           _wsUrl,
-          headers: {
-            'Authorization': 'Bearer $_bearerToken',
-          },
+          headers: {'Authorization': 'Bearer $_bearerToken'},
         ).timeout(connectTimeout);
       }
 
@@ -442,13 +449,13 @@ class AgyWsClient extends ChangeNotifier {
         timestamp: now,
       ),
     );
-    final isControlCmd = text.startsWith('/cd ') ||
+    final isControlCmd =
+        text.startsWith('/cd ') ||
         text.startsWith('/resume ') ||
         text.startsWith('/model ') ||
         text == '/new' ||
         text == '/stop';
     if (!isControlCmd) {
-      _activeStreamingMsgId = null;
       _streamingTargetSessionId = _activeSessionId;
       for (final s in _sessions) {
         if (s.id == (_activeSessionId ?? 'default')) {
@@ -468,7 +475,9 @@ class AgyWsClient extends ChangeNotifier {
 
     try {
       _socket!.add(payload);
-      _addDebugLog('→ send: ${text.length > 40 ? "${text.substring(0, 40)}…" : text}');
+      _addDebugLog(
+        '→ send: ${text.length > 40 ? "${text.substring(0, 40)}…" : text}',
+      );
       _setCharacterState(CharacterState.thinking);
       notifyListeners();
       return true;
@@ -481,7 +490,6 @@ class AgyWsClient extends ChangeNotifier {
 
   /// Envía comando `/stop` para matar inmediatamente el árbol de procesos en Go.
   void stopExecution() {
-    _activeStreamingMsgId = null;
     _activity = AgentActivity.idle;
     _setCharacterState(CharacterState.idle);
     if (!isConnected) return;
@@ -495,38 +503,22 @@ class AgyWsClient extends ChangeNotifier {
     } catch (_) {}
   }
 
-  /// Sube múltiples fotos/capturas al servidor Go y envía un solo prompt con todas las rutas adjuntas.
+  PcHttpApi get _api => PcHttpApi(wsUrl: _wsUrl, token: _bearerToken);
+
+  void _reportError(String message) {
+    _lastError = message;
+    notifyListeners();
+  }
+
+  /// Uploads several images and sends one prompt that references all saved paths.
   Future<bool> uploadAttachmentsWithPrompt(
     List<String> filePaths,
     String promptText,
   ) async {
-    if (filePaths.isEmpty) {
-      return sendPrompt(promptText);
-    }
+    if (filePaths.isEmpty) return sendPrompt(promptText);
     try {
-      final wsUri = Uri.parse(_wsUrl);
-      final scheme = wsUri.scheme == 'wss' ? 'https' : 'http';
-      final uploadUri = wsUri.replace(scheme: scheme, path: '/upload');
-
-      final savedPaths = <String>[];
-      for (final filePath in filePaths) {
-        final req = http.MultipartRequest('POST', uploadUri);
-        req.headers['Authorization'] = 'Bearer $_bearerToken';
-        req.fields['target'] = 'cache';
-        req.files.add(await http.MultipartFile.fromPath('file', filePath));
-
-        final streamed = await req.send().timeout(const Duration(seconds: 30));
-        final body = await streamed.stream.bytesToString();
-        if (streamed.statusCode >= 400) {
-          _lastError = 'Error subiendo captura (${streamed.statusCode})';
-          notifyListeners();
-          return false;
-        }
-        final decoded = jsonDecode(body) as Map<String, dynamic>;
-        savedPaths.add(decoded['path'] as String? ?? filePath);
-      }
-
-      final header = savedPaths
+      final saved = [for (final f in filePaths) (await _api.upload(f)).path];
+      final header = saved
           .map((p) => '[Imagen adjunta guardada en: $p]')
           .join('\n');
       final instr = promptText.trim().isNotEmpty
@@ -534,13 +526,12 @@ class AgyWsClient extends ChangeNotifier {
           : 'Por favor analiza esta imagen.';
       return sendPrompt('$header\n\n$instr');
     } catch (err) {
-      _lastError = err.toString();
-      notifyListeners();
+      _reportError('Error subiendo captura: $err');
       return false;
     }
   }
 
-  /// Sube una foto, PDF o archivo al servidor Go (`POST /upload`) y opcionalmente lo analiza con IA.
+  /// Uploads a file to the PC and optionally asks the agent to analyze it.
   Future<bool> uploadFile(
     String filePath, {
     String target = 'cache',
@@ -548,70 +539,32 @@ class AgyWsClient extends ChangeNotifier {
     String caption = '',
   }) async {
     try {
-      final wsUri = Uri.parse(_wsUrl);
-      final scheme = wsUri.scheme == 'wss' ? 'https' : 'http';
-      final uploadUri = wsUri.replace(scheme: scheme, path: '/upload');
-
-      final req = http.MultipartRequest('POST', uploadUri);
-      req.headers['Authorization'] = 'Bearer $_bearerToken';
-      req.fields['target'] = target;
-      req.files.add(await http.MultipartFile.fromPath('file', filePath));
-
-      final streamed = await req.send().timeout(const Duration(seconds: 30));
-      final body = await streamed.stream.bytesToString();
-      if (streamed.statusCode >= 400) {
-        _lastError = 'Error subiendo archivo (${streamed.statusCode})';
-        notifyListeners();
-        return false;
-      }
-      final decoded = jsonDecode(body) as Map<String, dynamic>;
-      final savedPath = decoded['path'] as String? ?? filePath;
-      final fileName = decoded['file_name'] as String? ?? 'archivo';
-
+      final saved = await _api.upload(filePath, target: target);
       if (analyzeWithAI) {
         final instr = caption.trim().isNotEmpty
             ? caption.trim()
             : 'Por favor analiza este archivo.';
-        return sendPrompt('[Archivo adjunto guardado en: $savedPath]\n\n$instr');
+        return sendPrompt(
+          '[Archivo adjunto guardado en: ${saved.path}]\n\n$instr',
+        );
       }
-
-      _messages.add(
-        ChatMessage(
-          id: 'up_${DateTime.now().microsecondsSinceEpoch}',
-          isUser: false,
-          text: 'Archivo `$fileName` guardado en:\n`$savedPath`',
-          timestamp: DateTime.now(),
-        ),
+      _addSystemMessage(
+        'up',
+        'Archivo `${saved.fileName}` guardado en:\n`${saved.path}`',
       );
-      notifyListeners();
       return true;
     } catch (err) {
-      _lastError = err.toString();
-      notifyListeners();
+      _reportError('Error subiendo archivo: $err');
       return false;
     }
   }
 
-  /// Envía una foto a `POST /avatar/from-photo` para que Gemini Vision extraiga
-  /// los rasgos y devuelva 4 variantes del personaje animado con mini-laptop.
-  Future<List<GeminiAvatarProfile>> generateAvatarVariantsFromPhoto(String filePath) async {
+  /// Asks the PC to design character variants from a photo.
+  Future<List<GeminiAvatarProfile>> generateAvatarVariantsFromPhoto(
+    String filePath,
+  ) async {
     try {
-      final wsUri = Uri.parse(_wsUrl);
-      final scheme = wsUri.scheme == 'wss' ? 'https' : 'http';
-      final uri = wsUri.replace(scheme: scheme, path: '/avatar/from-photo');
-
-      final req = http.MultipartRequest('POST', uri);
-      req.headers['Authorization'] = 'Bearer $_bearerToken';
-      req.files.add(await http.MultipartFile.fromPath('file', filePath));
-
-      final streamed = await req.send().timeout(const Duration(seconds: 40));
-      final body = await streamed.stream.bytesToString();
-      if (streamed.statusCode >= 400) {
-        _lastError = 'Error generando personaje (${streamed.statusCode})';
-        notifyListeners();
-        return const [];
-      }
-      final decoded = jsonDecode(body) as Map<String, dynamic>;
+      final decoded = await _api.avatarFromPhoto(filePath);
       final rawList = decoded['variants'] as List?;
       if (rawList != null && rawList.isNotEmpty) {
         return rawList
@@ -620,15 +573,33 @@ class AgyWsClient extends ChangeNotifier {
             .toList();
       }
       final traits = decoded['traits'] as Map<String, dynamic>?;
-      if (traits != null) {
-        return [GeminiAvatarProfile.fromJson(traits)];
-      }
-      return const [];
+      return traits == null ? const [] : [GeminiAvatarProfile.fromJson(traits)];
     } catch (err) {
-      _lastError = 'Error generando personaje con Gemini: $err';
-      notifyListeners();
+      _reportError('Error generando personaje: $err');
       return const [];
     }
+  }
+
+  /// Obsidian vault listing or note content; null when the PC is unreachable.
+  Future<Map<String, dynamic>?> fetchObsidian({String relPath = ''}) async {
+    try {
+      return await _api.obsidian(relPath);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void _addSystemMessage(String idPrefix, String text, {bool isError = false}) {
+    _messages.add(
+      ChatMessage(
+        id: '${idPrefix}_${DateTime.now().microsecondsSinceEpoch}',
+        isUser: false,
+        text: text,
+        isError: isError,
+        timestamp: DateTime.now(),
+      ),
+    );
+    notifyListeners();
   }
 
   void _onRawFrame(dynamic raw) {
@@ -679,7 +650,9 @@ class AgyWsClient extends ChangeNotifier {
 
         case AgentEventType.notify:
           final title = ev.title.isNotEmpty ? ev.title : 'HyprAgent';
-          final body = ev.text.isNotEmpty ? ev.text : 'Tarea completada en tu PC';
+          final body = ev.text.isNotEmpty
+              ? ev.text
+              : 'Tarea completada en tu PC';
           _notifications.add(
             ChatMessage(
               id: 'n_${DateTime.now().microsecondsSinceEpoch}',
@@ -707,7 +680,6 @@ class AgyWsClient extends ChangeNotifier {
               timestamp: DateTime.now(),
             ),
           );
-          _activeStreamingMsgId = null;
           _activity = AgentActivity.idle;
           _setCharacterState(CharacterState.idle);
           break;
@@ -725,13 +697,15 @@ class AgyWsClient extends ChangeNotifier {
             _pendingPermissions.removeWhere((p) => p.id == ev.message);
             LocalNotifier.cancelPermission(ev.message);
           } else if (!_pendingPermissions.any((p) => p.id == ev.message)) {
-            _pendingPermissions.add(PermissionRequest(
-              id: ev.message,
-              tool: ev.toolStatus,
-              detail: ev.text,
-              workspace: ev.title,
-              receivedAt: DateTime.now(),
-            ));
+            _pendingPermissions.add(
+              PermissionRequest(
+                id: ev.message,
+                tool: ev.toolStatus,
+                detail: ev.text,
+                workspace: ev.title,
+                receivedAt: DateTime.now(),
+              ),
+            );
             LocalNotifier.showPermission(
               ev.message,
               ev.toolStatus,
@@ -759,11 +733,8 @@ class AgyWsClient extends ChangeNotifier {
         ? ev.sessionId
         : (_streamingTargetSessionId ?? currentSid);
     final targetList = (sid != currentSid)
-        ? (_sessions
-                .where((s) => s.id == sid)
-                .firstOrNull
-                ?.messages ??
-            _messages)
+        ? (_sessions.where((s) => s.id == sid).firstOrNull?.messages ??
+              _messages)
         : _messages;
 
     final streamId = _sessionStreamingMsgIds[sid];
@@ -796,20 +767,21 @@ class AgyWsClient extends ChangeNotifier {
 
     if (ev.done) {
       _sessionStreamingMsgIds.remove(sid);
-      _activeStreamingMsgId = null;
       if (_streamingTargetSessionId == sid) {
         _streamingTargetSessionId = null;
       }
       for (final s in _sessions) {
         if (s.id == sid) {
           s.isWorking = false;
-          if (sid != currentSid && !ev.text.startsWith('Proyecto cambiado a ') && !ev.text.startsWith('Sesión reanudada: ')) {
+          if (sid != currentSid &&
+              !ev.text.startsWith('Proyecto cambiado a ') &&
+              !ev.text.startsWith('Sesión reanudada: ')) {
             s.hasUnread = true;
           }
           break;
         }
       }
-    _streamingTargetSessionId = _activeSessionId;
+      _streamingTargetSessionId = _activeSessionId;
       _activity = AgentActivity.idle;
       unawaited(_saveLocalHistory());
       if (!isAppInForeground && ev.text.trim().isNotEmpty) {
@@ -817,7 +789,9 @@ class AgyWsClient extends ChangeNotifier {
         final title = lines.first.length > 50
             ? '${lines.first.substring(0, 50)}…'
             : lines.first;
-        final body = lines.length > 1 ? lines.sublist(1).join(' ').trim() : ev.text.trim();
+        final body = lines.length > 1
+            ? lines.sublist(1).join(' ').trim()
+            : ev.text.trim();
         LocalNotifier.show(title, body.isEmpty ? 'Tarea completada' : body);
       }
     }
@@ -829,7 +803,6 @@ class AgyWsClient extends ChangeNotifier {
     _subscription = null;
     _socket = null;
     _isConnecting = false;
-    _activeStreamingMsgId = null;
     // The server only broadcasts once; after a reconnect these buttons could never resolve.
     for (final p in _pendingPermissions) {
       LocalNotifier.cancelPermission(p.id);
@@ -874,173 +847,80 @@ class AgyWsClient extends ChangeNotifier {
     notifyListeners();
   }
 
-  void clearHistory() {
-    _messages.clear();
-    unawaited(_saveLocalHistory());
+  Future<void> _loadLocalHistory() async {
+    final savedSessions = await ChatHistoryStore.loadSessions();
+    if (_sessions.isEmpty && savedSessions.sessions.isNotEmpty) {
+      _sessions.addAll(savedSessions.sessions);
+      _activeSessionId ??= savedSessions.activeId;
+    }
+    final saved = await ChatHistoryStore.load();
+    if (_messages.isEmpty && saved.isNotEmpty) _messages.addAll(saved);
     notifyListeners();
   }
 
-  Future<void> _loadLocalHistory() async {
-    try {
-      final dir = await getApplicationDocumentsDirectory();
-      final f = File('${dir.path}/chat_history.json');
-      if (!await f.exists()) return;
-      final raw = await f.readAsString();
-      final list = jsonDecode(raw) as List<dynamic>;
-      if (_messages.isEmpty && list.isNotEmpty) {
-        for (final item in list) {
-          final m = item as Map<String, dynamic>;
-          _messages.add(ChatMessage(
-            id: m['id'] as String? ?? 'h_${_messages.length}',
-            isUser: m['is_user'] as bool? ?? false,
-            text: m['text'] as String? ?? '',
-            isError: m['is_error'] as bool? ?? false,
-            timestamp: DateTime.tryParse(m['ts'] as String? ?? '') ?? DateTime.now(),
-          ));
-        }
-        notifyListeners();
-      }
-    } catch (_) {}
-  }
-
   Future<void> _saveLocalHistory() async {
-    try {
-      final dir = await getApplicationDocumentsDirectory();
-      final f = File('${dir.path}/chat_history.json');
-      final tail = _messages.length > 80
-          ? _messages.sublist(_messages.length - 80)
-          : _messages;
-      final data = tail
-          .map((m) => {
-                'id': m.id,
-                'is_user': m.isUser,
-                'text': m.text,
-                'is_error': m.isError,
-                'ts': m.timestamp.toIso8601String(),
-              })
-          .toList();
-      await f.writeAsString(jsonEncode(data), flush: true);
-    } catch (_) {}
-  }
-
-  Future<Map<String, dynamic>?> fetchOptions() async {
-    try {
-      final wsUri = Uri.parse(_wsUrl);
-      final scheme = wsUri.scheme == 'wss' ? 'https' : 'http';
-      final optUri = wsUri.replace(scheme: scheme, path: '/options');
-      final res = await http
-          .get(optUri, headers: {'Authorization': 'Bearer $_bearerToken'})
-          .timeout(const Duration(seconds: 5));
-      if (res.statusCode == 200) {
-        return jsonDecode(res.body) as Map<String, dynamic>;
+    // The active chat's messages live in _messages; sync them into its entry first.
+    for (final s in _sessions) {
+      if (s.id == _activeSessionId) {
+        s.messages
+          ..clear()
+          ..addAll(_messages);
       }
-    } catch (_) {}
-    return null;
-  }
-
-  /// Navega la bóveda de Obsidian (`GET /obsidian?path=...`) con 0 tokens.
-  /// Devuelve la lista de carpetas/archivos o el contenido del `.md`.
-  Future<Map<String, dynamic>?> fetchObsidian({String relPath = ''}) async {
-    try {
-      final wsUri = Uri.parse(_wsUrl);
-      final scheme = wsUri.scheme == 'wss' ? 'https' : 'http';
-      final obsUri = wsUri.replace(
-        scheme: scheme,
-        path: '/obsidian',
-        queryParameters: relPath.isEmpty ? null : {'path': relPath},
-      );
-      final res = await http
-          .get(obsUri, headers: {'Authorization': 'Bearer $_bearerToken'})
-          .timeout(const Duration(seconds: 6));
-      if (res.statusCode == 200) {
-        return jsonDecode(res.body) as Map<String, dynamic>;
-      }
-    } catch (_) {}
-    return null;
+    }
+    await ChatHistoryStore.save(_messages);
+    await ChatHistoryStore.saveSessions(_sessions, _activeSessionId);
   }
 
   Future<void> _checkAndInstallUpdate() async {
     try {
-      final wsUri = Uri.parse(_wsUrl);
-      final scheme = wsUri.scheme == 'wss' ? 'https' : 'http';
-      final verUri = wsUri.replace(scheme: scheme, path: '/version');
-
-      final res = await http
-          .get(verUri, headers: {'Authorization': 'Bearer $_bearerToken'})
-          .timeout(const Duration(seconds: 4));
-      if (res.statusCode != 200) return;
-
-      final data = jsonDecode(res.body) as Map<String, dynamic>;
+      final data = await _api.version();
       final serverBuild = (data['build'] as num?)?.toInt() ?? 0;
       final apkExists = data['apk_exists'] as bool? ?? false;
-      if (!apkExists || serverBuild <= currentAppBuildNumber) {
-        if (_updateAvailable) {
-          _updateAvailable = false;
-          notifyListeners();
-        }
-        return;
-      }
-
-      _updateAvailable = true;
-      _availableVersion = data['version'] as String? ?? 'v$serverBuild';
+      final available = apkExists && serverBuild > currentAppBuildNumber;
+      if (!available && !_updateAvailable) return;
+      _updateAvailable = available;
+      if (available)
+        _availableVersion = data['version'] as String? ?? 'v$serverBuild';
       notifyListeners();
     } catch (_) {
-      // Silencioso en tests o si no hay actualización disponible
+      // No update info: tests, or a PC without /version.
     }
   }
 
   Future<void> installAvailableUpdate() async {
     try {
-      final wsUri = Uri.parse(_wsUrl);
-      final scheme = wsUri.scheme == 'wss' ? 'https' : 'http';
-      final apkUri = wsUri.replace(scheme: scheme, path: '/apk');
-
-      _messages.add(
-        ChatMessage(
-          id: 'ota_${DateTime.now().microsecondsSinceEpoch}',
-          isUser: false,
-          text: '⏳ Descargando actualización ($_availableVersion)...',
-          timestamp: DateTime.now(),
-        ),
+      _addSystemMessage(
+        'ota',
+        '⏳ Descargando actualización ($_availableVersion)...',
       );
-      notifyListeners();
-
-      final apkRes = await http
-          .get(apkUri, headers: {'Authorization': 'Bearer $_bearerToken'})
-          .timeout(const Duration(minutes: 5));
-      if (apkRes.statusCode != 200) {
-        throw Exception('HTTP ${apkRes.statusCode}');
-      }
-
       final dir = await getTemporaryDirectory();
-      final apkFile = File('${dir.path}/paulobot-update.apk');
-      await apkFile.writeAsBytes(apkRes.bodyBytes, flush: true);
-
+      final apk = await _api.downloadApk(
+        File('${dir.path}/paulobot-update.apk'),
+      );
       final result = await OpenFilex.open(
-        apkFile.path,
+        apk.path,
         type: 'application/vnd.android.package-archive',
       );
       if (result.type != ResultType.done) {
-        throw Exception('${result.type.name}: ${result.message}');
+        throw PcApiException('${result.type.name}: ${result.message}');
       }
     } catch (err) {
-      _messages.add(
-        ChatMessage(
-          id: 'ota_err_${DateTime.now().microsecondsSinceEpoch}',
-          isUser: false,
-          text: '⚠️ No se pudo abrir el instalador: $err',
-          isError: true,
-          timestamp: DateTime.now(),
-        ),
+      _addSystemMessage(
+        'ota_err',
+        '⚠️ No se pudo abrir el instalador: $err',
+        isError: true,
       );
-      notifyListeners();
     }
   }
 
   void _setCharacterState(CharacterState next) {
     if (next == CharacterState.sleeping) {
-      _activity = const AgentActivity(state: Avatar3DState.error, label: 'Reconectando · buscando túnel');
-    } else if (_activity.state == Avatar3DState.error && _activity.label.startsWith('Reconectando')) {
+      _activity = const AgentActivity(
+        state: Avatar3DState.error,
+        label: 'Reconectando · buscando túnel',
+      );
+    } else if (_activity.state == Avatar3DState.error &&
+        _activity.label.startsWith('Reconectando')) {
       _activity = AgentActivity.idle;
     }
     if (_characterState != next) {

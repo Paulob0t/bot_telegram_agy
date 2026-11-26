@@ -15,15 +15,19 @@ class LocalNotifier {
   static Future<void> init() async {
     if (_initialized) return;
     try {
-      const androidInit = AndroidInitializationSettings('@drawable/ic_notification');
+      const androidInit = AndroidInitializationSettings(
+        '@drawable/ic_notification',
+      );
       const initSettings = InitializationSettings(android: androidInit);
       await _plugin.initialize(
         initSettings,
         onDidReceiveNotificationResponse: _onResponse,
       );
 
-      final androidImpl = _plugin.resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin>();
+      final androidImpl = _plugin
+          .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin
+          >();
       await androidImpl?.requestNotificationsPermission();
       _initialized = true;
     } catch (_) {
@@ -55,10 +59,12 @@ class LocalNotifier {
     try {
       final cleanTitle = cleanNotificationText(title);
       final cleanFull = cleanNotificationText(body);
-      final expandedText =
-          cleanFull.length > 700 ? '${cleanFull.substring(0, 700)}…' : cleanFull;
-      final collapsedText =
-          cleanFull.length > 140 ? '${cleanFull.substring(0, 140)}…' : cleanFull;
+      final expandedText = cleanFull.length > 700
+          ? '${cleanFull.substring(0, 700)}…'
+          : cleanFull;
+      final collapsedText = cleanFull.length > 140
+          ? '${cleanFull.substring(0, 140)}…'
+          : cleanFull;
 
       final androidDetails = AndroidNotificationDetails(
         'paulobot_tasks',
@@ -106,7 +112,8 @@ class LocalNotifier {
       final androidDetails = AndroidNotificationDetails(
         'paulobot_approvals',
         'Aprobaciones de herramientas',
-        channelDescription: 'Claude espera tu permiso para ejecutar algo en tu PC',
+        channelDescription:
+            'Claude espera tu permiso para ejecutar algo en tu PC',
         icon: '@drawable/ic_notification',
         importance: Importance.max,
         priority: Priority.max,
