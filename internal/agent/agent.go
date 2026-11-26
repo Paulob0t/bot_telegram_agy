@@ -45,6 +45,7 @@ type Event struct {
 	Label      string    `json:"label,omitempty"`
 	Detail     string    `json:"detail,omitempty"`
 	Engine     string    `json:"engine,omitempty"`
+	SessionID  string    `json:"session_id,omitempty"`
 }
 
 type Request struct {
@@ -52,6 +53,7 @@ type Request struct {
 	Text      string `json:"text"`
 	Timestamp int64  `json:"timestamp"`
 	Source    string `json:"source,omitempty"` // "telegram" | "mobile"
+	SessionID string `json:"session_id,omitempty"`
 }
 
 type RunnerFunc func(ctx context.Context, cfg *config.Config, st *state.BotSessionState, prompt string, cb executor.StreamCallbacks) (string, error)
@@ -63,6 +65,7 @@ type Service struct {
 	runner RunnerFunc
 
 	execMu       sync.Mutex
+	sessMuMap    sync.Map
 	stateMu      sync.RWMutex
 	currentState State
 	activeCancel context.CancelFunc
@@ -186,8 +189,25 @@ func (s *Service) setState(next State, perReq func(Event)) {
 	}
 }
 
+func (s *Service) getSessionMutex(sessionID string) *sync.Mutex {
+	sid := strings.TrimSpace(sessionID)
+	if sid == "" {
+		return &s.execMu
+	}
+	v, _ := s.sessMuMap.LoadOrStore(sid, &sync.Mutex{})
+	return v.(*sync.Mutex)
+}
+
 // Execute procesa un prompt de forma serializada entre todos los transportes y emite eventos de estado y chunks.
 func (s *Service) Execute(parentCtx context.Context, req Request, onEvent func(Event)) (string, error) {
+	return s.ExecuteWithState(parentCtx, s.st, req, onEvent)
+}
+
+// ExecuteWithState procesa un prompt usando un estado de sesión aislado (CWD y ConversationID propios por pestaña móvil).
+func (s *Service) ExecuteWithState(parentCtx context.Context, st *state.BotSessionState, req Request, onEvent func(Event)) (string, error) {
+	if st == nil {
+		st = s.st
+	}
 	prompt := strings.TrimSpace(req.Text)
 	if prompt == "" {
 		err := fmt.Errorf("el texto del mensaje está vacío")
@@ -195,12 +215,13 @@ func (s *Service) Execute(parentCtx context.Context, req Request, onEvent func(E
 		return "", err
 	}
 
-	if s.execMu.TryLock() {
-		defer s.execMu.Unlock()
+	mu := s.getSessionMutex(req.SessionID)
+	if mu.TryLock() {
+		defer mu.Unlock()
 	} else {
 		s.emitActivity(executor.Activity{State: executor.ActivityStarting, Label: "Mensaje en cola · esperando turno"}, onEvent)
-		s.execMu.Lock()
-		defer s.execMu.Unlock()
+		mu.Lock()
+		defer mu.Unlock()
 	}
 
 	ctx, cancel := context.WithCancel(parentCtx)
@@ -225,7 +246,7 @@ func (s *Service) Execute(parentCtx context.Context, req Request, onEvent func(E
 		formattedPrompt += "\n\n[Mobile: responde claro y conciso para interfaz móvil con asistente visual]"
 	}
 
-	out, err := s.runner(ctx, s.cfg, s.st, formattedPrompt, executor.StreamCallbacks{
+	out, err := s.runner(ctx, s.cfg, st, formattedPrompt, executor.StreamCallbacks{
 		OnState: func(stStr string) {
 			switch State(stStr) {
 			case StateThinking:
@@ -243,17 +264,18 @@ func (s *Service) Execute(parentCtx context.Context, req Request, onEvent func(E
 			finalText := text
 			if done && req.Source == "mobile" && finalText != "" {
 				elapsed := time.Since(startedAt).Round(100 * time.Millisecond)
-				mod := s.st.CurrentModel
+				mod := st.CurrentModel
 				if mod == "" {
 					mod = "gemini-4-hydrogen-low"
 				}
-				finalText = fmt.Sprintf("%s\n\n— %s · %s · %s", finalText, elapsed, s.st.GetCWDShortName(s.st.CurrentCWD), mod)
+				finalText = fmt.Sprintf("%s\n\n— %s · %s · %s", finalText, elapsed, st.GetCWDShortName(st.CurrentCWD), mod)
 			}
 			s.broadcast(Event{
 				Type:       EventTypeChunk,
 				Text:       finalText,
 				ToolStatus: toolStatus,
 				Done:       done,
+				SessionID:  req.SessionID,
 			}, onEvent)
 		},
 	})
@@ -261,8 +283,9 @@ func (s *Service) Execute(parentCtx context.Context, req Request, onEvent func(E
 	elapsed := time.Since(startedAt).Round(100 * time.Millisecond)
 	if err != nil && ctx.Err() == nil {
 		s.broadcast(Event{
-			Type:    EventTypeError,
-			Message: err.Error(),
+			Type:      EventTypeError,
+			Message:   err.Error(),
+			SessionID: req.SessionID,
 		}, onEvent)
 		s.emitActivity(executor.Activity{State: executor.ActivityError, Label: "Error en ejecución", Detail: err.Error()}, onEvent)
 	} else if ctx.Err() != nil {

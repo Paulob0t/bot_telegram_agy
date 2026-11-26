@@ -62,6 +62,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/ws", s.handleWS)
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/notify", s.handleNotify)
+	mux.HandleFunc("/permission", s.handlePermission)
 	mux.HandleFunc("/upload", s.handleUpload)
 	mux.HandleFunc("/scan", s.handleScan)
 	mux.HandleFunc("/options", s.handleOptions)
@@ -79,9 +80,9 @@ func (s *Server) ActiveAddrs() []string {
 }
 
 // Run escucha únicamente en interfaces privadas seguras:
-// - Si MOBILE_WS_ADDR está definido en .env, escucha exclusivamente ahí.
-// - Si no, escucha en loopback (127.0.0.1:8080 para pruebas locales/emulador) y se enlaza automáticamente
-//   a la IP de Tailscale (100.x.y.z:8080) en cuanto la interfaz tailscale0 está activa (jamás expone en LAN 0.0.0.0).
+//   - Si MOBILE_WS_ADDR está definido en .env, escucha exclusivamente ahí.
+//   - Si no, escucha en loopback (127.0.0.1:8080 para pruebas locales/emulador) y se enlaza automáticamente
+//     a la IP de Tailscale (100.x.y.z:8080) en cuanto la interfaz tailscale0 está activa (jamás expone en LAN 0.0.0.0).
 func (s *Server) Run(ctx context.Context) {
 	if explicit := strings.TrimSpace(s.cfg.MobileWSAddr); explicit != "" {
 		s.serveOnAddr(ctx, explicit)
@@ -200,6 +201,34 @@ func (s *Server) handleNotify(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write([]byte(`{"ok":true}`))
+}
+
+// permissionWait bounds how long a hook blocks waiting for the phone to answer.
+const permissionWait = 120 * time.Second
+
+func (s *Server) handlePermission(w http.ResponseWriter, r *http.Request) {
+	if !s.isAuthorized(r) {
+		http.Error(w, "no autorizado", http.StatusUnauthorized)
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "método no permitido", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Tool      string `json:"tool"`
+		Detail    string `json:"detail"`
+		Workspace string `json:"workspace"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64*1024)).Decode(&body); err != nil {
+		http.Error(w, "JSON inválido", http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), permissionWait)
+	defer cancel()
+	decision := s.agent.RequestPermission(ctx, body.Tool, body.Detail, body.Workspace)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"decision": string(decision)})
 }
 
 func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
@@ -334,16 +363,16 @@ func (s *Server) scanPCEnvironment() map[string]any {
 
 	effDisp, _, _ := models.GetEffectiveModelInfo(s.cfg, s.st)
 	return map[string]any{
-		"ok":            true,
-		"engine":        s.st.CurrentEngine,
-		"model":         effDisp,
-		"cwd":           s.st.CurrentCWD,
-		"cwd_short":     s.st.GetCWDShortName(s.st.CurrentCWD),
-		"projects":      projNames,
-		"total_projs":   len(projs),
-		"clis":          clis,
-		"tailscale_ip":  config.DetectTailscaleIPv4(),
-		"telegram_on":   s.cfg.EnableTelegram,
+		"ok":           true,
+		"engine":       s.st.CurrentEngine,
+		"model":        effDisp,
+		"cwd":          s.st.CurrentCWD,
+		"cwd_short":    s.st.GetCWDShortName(s.st.CurrentCWD),
+		"projects":     projNames,
+		"total_projs":  len(projs),
+		"clis":         clis,
+		"tailscale_ip": config.DetectTailscaleIPv4(),
+		"telegram_on":  s.cfg.EnableTelegram,
 	}
 }
 
@@ -491,6 +520,10 @@ func (s *Server) processClientMessage(ctx context.Context, ws *wsConn, raw []byt
 		return
 	}
 
+	if s.agent.HandlePermissionCommand(text) {
+		return
+	}
+
 	if strings.HasPrefix(text, "/") && s.handleMobileCommand(ws, text) {
 		return
 	}
@@ -525,6 +558,10 @@ func (s *Server) handleMobileCommand(ws *wsConn, rawText string) bool {
 			"◆ Motor: %s\n• Modelo: %s (%s · %dk ctx)\n• Proyecto:\n%s",
 			s.st.CurrentEngine, effDisp, strings.ToUpper(s.st.CurrentEffort), ctxWin/1000, summary,
 		))
+		return true
+
+	case "/approvals", "/aprobaciones":
+		reply(agent.ApprovalsToggleReply(s.st.ToggleFeature("mobile_approvals")))
 		return true
 
 	case "/agy":

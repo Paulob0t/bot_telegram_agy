@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -8,12 +9,17 @@ import 'package:path_provider/path_provider.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 import '../models/agent_event.dart';
+import '../services/hub_credentials_store.dart';
 import '../services/ws_client.dart';
+import '../widgets/permission_request_card.dart';
 import '../features/avatar3d/models/avatar3d_state.dart';
 import '../features/avatar3d/widgets/avatar3d_viewport.dart';
 import '../widgets/chat_message_bubble.dart';
 import '../widgets/obsidian_vault_sheet.dart';
+import '../widgets/commands_drawer.dart';
 import '../widgets/rive_avatar.dart';
+import '../widgets/session_status_banners.dart';
+import '../widgets/worker_status_pill.dart';
 
 class CompanionScreen extends StatefulWidget {
   final AgyWsClient client;
@@ -39,7 +45,6 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
   Color? _avatarAccent;
   Color? _avatarBoxBg;
   String? _customRivePath;
-  String? _customGlbPath;
   String? _customPhotoPath;
   GeminiAvatarProfile? _geminiProfile;
   List<GeminiAvatarProfile> _geminiVariants = const [];
@@ -107,10 +112,9 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
     ('/obsidian', 'Bóveda de Obsidian y Prompts'),
     ('/scan', 'Escanear PC y proyectos'),
     ('/status', 'Estado del sistema'),
-    ('/project', 'Cambiar proyecto'),
     ('/model', 'Cambiar modelo'),
     ('/resume', 'Historial de chats'),
-    ('/new', 'Nuevo chat limpio'),
+    ('/new', 'Nuevo chat (elige proyecto)'),
     ('/tokens', 'Cuotas de tokens'),
     ('/stop', 'Detener ejecución'),
   ];
@@ -123,6 +127,8 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
     _inputController.addListener(_onTextChanged);
     _loadAvatarPrefs();
   }
+
+  bool _setupPrompted = false;
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
@@ -159,10 +165,6 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
         if (riv != null && riv.isNotEmpty && File(riv).existsSync()) {
           _customRivePath = riv;
         }
-        final glb = data['customGlbPath'] as String?;
-        if (glb != null && glb.isNotEmpty && File(glb).existsSync()) {
-          _customGlbPath = glb;
-        }
         final photo = data['customPhotoPath'] as String?;
         if (photo != null && photo.isNotEmpty && File(photo).existsSync()) {
           _customPhotoPath = photo;
@@ -192,7 +194,6 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
         'avatarAccent': _avatarAccent?.toARGB32(),
         'avatarBoxBg': _avatarBoxBg?.toARGB32(),
         'customRivePath': _customRivePath,
-        'customGlbPath': _customGlbPath,
         'customPhotoPath': _customPhotoPath,
         'geminiProfile': _geminiProfile?.toJson(),
         'geminiVariants': _geminiVariants.map((e) => e.toJson()).toList(),
@@ -217,7 +218,6 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
         _geminiVariants = variants;
         _geminiProfile = variants.first;
         _customPhotoPath = null;
-        _customGlbPath = null;
         _customRivePath = null;
       }
     });
@@ -424,7 +424,6 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
                                   setState(() {
                                     _geminiProfile = v;
                                     _customPhotoPath = null;
-                                    _customGlbPath = null;
                                     _customRivePath = null;
                                   });
                                   _saveAvatarPrefs();
@@ -497,6 +496,12 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
   void _onClientUpdated() {
     if (!mounted) return;
     setState(() {});
+    if (widget.client.needsSetup && !_setupPrompted) {
+      _setupPrompted = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _openConnectionSheet();
+      });
+    }
     if (widget.client.messages.length != _lastMsgCount) {
       _lastMsgCount = widget.client.messages.length;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -543,7 +548,7 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
       _openOptionPicker('/model');
       return;
     }
-    if (lower == '/project' || lower == '/cd') {
+    if (lower == '/project' || lower == '/cd' || lower == '/new' || lower == '/nuevo') {
       _inputController.clear();
       _openOptionPicker('/project');
       return;
@@ -636,21 +641,6 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
                     _generateGeminiAvatarFromPhoto(path);
                   },
                 ),
-              if (path.toLowerCase().endsWith('.glb') ||
-                  path.toLowerCase().endsWith('.gltf'))
-                ListTile(
-                  leading: const Icon(Icons.view_in_ar_rounded, color: Color(0xFFA371F7)),
-                  title: const Text('Activar como avatar 3D (.glb)', style: TextStyle(color: Color(0xFFE6EDF3))),
-                  onTap: () {
-                    Navigator.of(ctx).pop();
-                    setState(() {
-                      _customGlbPath = path;
-                      _customPhotoPath = null;
-                      _customRivePath = null;
-                    });
-                    _saveAvatarPrefs();
-                  },
-                ),
               ListTile(
                 leading: const Icon(Icons.folder_outlined, color: Color(0xFF58A6FF)),
                 title: const Text('Guardar en proyecto (cwd)', style: TextStyle(color: Color(0xFFE6EDF3))),
@@ -678,6 +668,21 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
     final nameCtrl = TextEditingController(text: _assistantName);
     final urlCtrl = TextEditingController(text: widget.client.wsUrl);
     final tokCtrl = TextEditingController(text: widget.client.bearerToken);
+    final hub = widget.client.hubCredentials;
+    var hubEnabled = hub?.enabled ?? false;
+    final gistIdCtrl = TextEditingController(text: hub?.gistId ?? '');
+    final gistTokCtrl = TextEditingController(text: hub?.gistToken ?? '');
+    final hubSecretCtrl = TextEditingController(text: hub?.hubSecret ?? '');
+    InputDecoration field(String label) => InputDecoration(
+          labelText: label,
+          labelStyle: const TextStyle(color: Color(0xFF8B949E)),
+          enabledBorder: const OutlineInputBorder(
+            borderSide: BorderSide(color: Color(0xFF30363D)),
+          ),
+          focusedBorder: const OutlineInputBorder(
+            borderSide: BorderSide(color: Color(0xFFD97757)),
+          ),
+        );
 
     showModalBottomSheet<void>(
       context: context,
@@ -686,14 +691,15 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
       ),
-      builder: (ctx) {
-        return Padding(
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheetState) => Padding(
           padding: EdgeInsets.only(
             left: 20,
             right: 20,
             top: 20,
             bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
           ),
+          child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -752,6 +758,42 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
                   ),
                 ),
               ),
+              const SizedBox(height: 8),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: hubEnabled,
+                onChanged: (v) => setSheetState(() => hubEnabled = v),
+                title: const Text(
+                  'Conectar por Hub (Gist)',
+                  style: TextStyle(color: Color(0xFFE6EDF3), fontSize: 14),
+                ),
+                subtitle: const Text(
+                  'Encuentra la PC aunque cambie de red',
+                  style: TextStyle(color: Color(0xFF8B949E), fontSize: 12),
+                ),
+              ),
+              if (hubEnabled) ...[
+                const SizedBox(height: 8),
+                TextField(
+                  controller: gistIdCtrl,
+                  style: const TextStyle(color: Color(0xFFE6EDF3), fontSize: 14),
+                  decoration: field('Gist ID'),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: gistTokCtrl,
+                  obscureText: true,
+                  style: const TextStyle(color: Color(0xFFE6EDF3), fontSize: 14),
+                  decoration: field('Token de GitHub (solo permiso gist)'),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: hubSecretCtrl,
+                  obscureText: true,
+                  style: const TextStyle(color: Color(0xFFE6EDF3), fontSize: 14),
+                  decoration: field('Secreto del Hub'),
+                ),
+              ],
               const SizedBox(height: 16),
               FilledButton(
                 style: FilledButton.styleFrom(
@@ -768,10 +810,21 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
                     setState(() => _assistantName = nextName);
                     _saveAvatarPrefs();
                   }
-                  widget.client.updateCredentials(
-                    wsUrl: urlCtrl.text,
-                    bearerToken: tokCtrl.text,
+                  final client = widget.client;
+                  final hubCreds = HubCredentials(
+                    enabled: hubEnabled,
+                    gistToken: gistTokCtrl.text.trim(),
+                    gistId: gistIdCtrl.text.trim(),
+                    hubSecret: hubSecretCtrl.text.trim(),
                   );
+                  // Persist direct-mode values first, then reconnect through the hub when on.
+                  unawaited(() async {
+                    await client.updateCredentials(
+                      wsUrl: urlCtrl.text,
+                      bearerToken: tokCtrl.text,
+                    );
+                    await client.configureHubRelay(hubCreds);
+                  }());
                 },
                 child: const Text(
                   'Guardar y Reconectar',
@@ -780,8 +833,9 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
               ),
             ],
           ),
-        );
-      },
+          ),
+        ),
+      ),
     );
   }
 
@@ -795,6 +849,8 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
       body: SafeArea(
         child: Column(
           children: [
+            PermissionRequestCard(client: widget.client),
+            SessionStatusBanners(client: widget.client),
             // Header minimalista fijo centrado con Stack: [=]  [Cuadrito + Nombre]  [🔔] [⚙️]
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
@@ -803,15 +859,45 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
                 children: [
                   Align(
                     alignment: Alignment.topLeft,
-                    child: Builder(
-                      builder: (btnCtx) => IconButton(
-                        tooltip: 'Menú de comandos',
-                        onPressed: () => Scaffold.of(btnCtx).openDrawer(),
-                        style: IconButton.styleFrom(
-                          backgroundColor: const Color(0xFF1A1D21),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Builder(
+                          builder: (btnCtx) {
+                            final hasUnread = widget.client.sessions.any((s) => s.hasUnread);
+                            return Stack(
+                              clipBehavior: Clip.none,
+                              children: [
+                                IconButton(
+                                  tooltip: 'Menú de comandos',
+                                  onPressed: () => Scaffold.of(btnCtx).openDrawer(),
+                                  style: IconButton.styleFrom(
+                                    backgroundColor: const Color(0xFF1A1D21),
+                                  ),
+                                  icon: const Icon(Icons.drag_handle, color: Color(0xFFE6EDF3), size: 20),
+                                ),
+                                if (hasUnread)
+                                  Positioned(
+                                    right: 6,
+                                    top: 6,
+                                    child: Container(
+                                      width: 9,
+                                      height: 9,
+                                      decoration: const BoxDecoration(
+                                        color: Color(0xFF3FB950),
+                                        shape: BoxShape.circle,
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            );
+                          },
                         ),
-                        icon: const Icon(Icons.drag_handle, color: Color(0xFFE6EDF3), size: 20),
-                      ),
+                        if (widget.client.activeWorker.isNotEmpty) ...[
+                          const SizedBox(width: 6),
+                          WorkerStatusPill(activeWorker: widget.client.activeWorker),
+                        ],
+                      ],
                     ),
                   ),
                   GestureDetector(
@@ -821,8 +907,8 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
                       children: [
                         Avatar3DViewport(
                           activity: widget.client.activity,
+                          speaking: state == CharacterState.speaking,
                           size: 112,
-                          customGlbPath: _customGlbPath,
                           customPhotoPath: _customPhotoPath,
                           geminiProfile: _geminiProfile,
                           boxBackgroundColor: _avatarBoxBg,
@@ -1148,34 +1234,77 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
               ),
               child: Row(
                 children: [
-                  IconButton(
-                    visualDensity: VisualDensity.compact,
-                    tooltip: 'Agregar captura o imagen al mensaje',
-                    onPressed: widget.client.isConnected ? _pickImagesForPrompt : null,
-                    icon: const Icon(Icons.image_outlined, color: Color(0xFFD97757), size: 20),
-                  ),
-                  IconButton(
-                    visualDensity: VisualDensity.compact,
-                    tooltip: 'Más opciones de archivo o PDF',
-                    onPressed: widget.client.isConnected ? _pickAndUploadFile : null,
-                    icon: const Icon(Icons.attach_file, color: Color(0xFF8B949E), size: 20),
-                  ),
-                  IconButton(
-                    tooltip: _isListeningVoice ? 'Detener voz' : 'Dictar por voz',
-                    onPressed: widget.client.isConnected ? _toggleVoiceInput : null,
-                    icon: Icon(
-                      _isListeningVoice ? Icons.mic : Icons.mic_none,
-                      color: _isListeningVoice ? const Color(0xFFF85149) : const Color(0xFF8B949E),
-                      size: 20,
+                  PopupMenuButton<String>(
+                    enabled: widget.client.isConnected,
+                    tooltip: 'Adjuntar o dictar',
+                    color: const Color(0xFF1A1D21),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      side: const BorderSide(color: Color(0xFF30363D)),
                     ),
+                    icon: Icon(
+                      _isListeningVoice ? Icons.mic : Icons.add_box_outlined,
+                      color: _isListeningVoice
+                          ? const Color(0xFFF85149)
+                          : const Color(0xFFD97757),
+                      size: 22,
+                    ),
+                    onSelected: (value) {
+                      if (value == 'image') {
+                        _pickImagesForPrompt();
+                      } else if (value == 'file') {
+                        _pickAndUploadFile();
+                      } else if (value == 'voice') {
+                        _toggleVoiceInput();
+                      }
+                    },
+                    itemBuilder: (ctx) => [
+                      const PopupMenuItem(
+                        value: 'image',
+                        child: Row(
+                          children: [
+                            Icon(Icons.image_outlined, color: Color(0xFFD97757), size: 18),
+                            SizedBox(width: 10),
+                            Text('Imagen o captura', style: TextStyle(color: Color(0xFFE6EDF3), fontSize: 13)),
+                          ],
+                        ),
+                      ),
+                      const PopupMenuItem(
+                        value: 'file',
+                        child: Row(
+                          children: [
+                            Icon(Icons.attach_file, color: Color(0xFF8B949E), size: 18),
+                            SizedBox(width: 10),
+                            Text('Archivo o PDF', style: TextStyle(color: Color(0xFFE6EDF3), fontSize: 13)),
+                          ],
+                        ),
+                      ),
+                      PopupMenuItem(
+                        value: 'voice',
+                        child: Row(
+                          children: [
+                            Icon(
+                              _isListeningVoice ? Icons.mic : Icons.mic_none,
+                              color: _isListeningVoice ? const Color(0xFFF85149) : const Color(0xFF8B949E),
+                              size: 18,
+                            ),
+                            const SizedBox(width: 10),
+                            Text(
+                              _isListeningVoice ? 'Detener voz' : 'Dictar por voz',
+                              style: const TextStyle(color: Color(0xFFE6EDF3), fontSize: 13),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
                   Expanded(
                     child: TextField(
                       controller: _inputController,
                       minLines: 1,
-                      maxLines: 5,
+                      maxLines: 8,
                       keyboardType: TextInputType.multiline,
-                      onSubmitted: (_) => _handleSend(),
+                      textInputAction: TextInputAction.newline,
                       style: const TextStyle(
                         color: Color(0xFFE6EDF3),
                         fontSize: 14,
@@ -1207,19 +1336,51 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
                     ),
                   ),
                   const SizedBox(width: 8),
-                  IconButton(
-                    key: const Key('send_prompt_btn'),
-                    onPressed: widget.client.isConnected ? _handleSend : null,
-                    style: IconButton.styleFrom(
-                      backgroundColor: widget.client.isConnected
-                          ? const Color(0xFFD97757)
-                          : const Color(0xFF21262D),
-                      foregroundColor: const Color(0xFF0D1117),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                    ),
-                    icon: const Icon(Icons.send_rounded, size: 18),
+                  Builder(
+                    builder: (_) {
+                      final actState = widget.client.activity.state;
+                      final isRunning = actState != Avatar3DState.idle &&
+                          actState != Avatar3DState.success &&
+                          actState != Avatar3DState.error;
+                      return Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (isRunning) ...[
+                            IconButton(
+                              key: const Key('stop_prompt_btn'),
+                              tooltip: 'Cancelar proceso',
+                              onPressed: widget.client.isConnected
+                                  ? widget.client.stopExecution
+                                  : null,
+                              style: IconButton.styleFrom(
+                                backgroundColor: const Color(0xFFF85149),
+                                foregroundColor: Colors.white,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                              ),
+                              icon: const Icon(Icons.stop_rounded, size: 20),
+                            ),
+                            const SizedBox(width: 6),
+                          ],
+                          IconButton(
+                            key: const Key('send_prompt_btn'),
+                            onPressed:
+                                widget.client.isConnected ? _handleSend : null,
+                            style: IconButton.styleFrom(
+                              backgroundColor: widget.client.isConnected
+                                  ? const Color(0xFFD97757)
+                                  : const Color(0xFF21262D),
+                              foregroundColor: const Color(0xFF0D1117),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                            ),
+                            icon: const Icon(Icons.send_rounded, size: 18),
+                          ),
+                        ],
+                      );
+                    },
                   ),
                 ],
               ),
@@ -1278,7 +1439,8 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
         borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
       ),
       builder: (ctx) {
-        final notifs = widget.client.notifications;
+        // Newest first.
+        final notifs = widget.client.notifications.reversed.toList();
         return SafeArea(
           child: SizedBox(
             height: MediaQuery.of(ctx).size.height * 0.65,
@@ -1355,8 +1517,13 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
   }
 
   Future<void> _openOptionPicker(String cmd) async {
-    final data = await widget.client.fetchOptions();
-    if (!mounted || data == null) return;
+    if (cmd == '/new') cmd = '/project';
+    var data = await widget.client.fetchOptionsOverWs(cmd);
+    if (!mounted) return;
+    // The resume list must always appear so a clean chat can be picked even when
+    // the PC returns no history or the options request fails.
+    if (data == null && cmd == '/resume') data = const {};
+    if (data == null) return;
 
     final String title;
     final List<({String label, String sub, String command, bool active})> items = [];
@@ -1389,6 +1556,15 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
       }
     } else {
       title = 'Seleccionar Chat';
+      final raw = data['chats'] as List? ?? [];
+      if (!raw.any((c) => c['id'] == 'NEW')) {
+        items.add((
+          label: '➕ Nuevo chat limpio en este proyecto',
+          sub: 'NEW',
+          command: '/resume NEW',
+          active: false,
+        ));
+      }
       for (final c in (data['chats'] as List? ?? [])) {
         final id = c['id'] as String? ?? '';
         final cTitle = c['title'] as String? ?? id;
@@ -1453,6 +1629,18 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
                       ),
                       onTap: () {
                         Navigator.of(ctx).pop();
+                        if (it.command.startsWith('/cd ')) {
+                          widget.client.openSession(
+                            id: '${it.command}_${DateTime.now().millisecondsSinceEpoch}',
+                            project: it.label,
+                            title: it.label,
+                          );
+                          widget.client.sendPrompt(it.command);
+                          // The worker handles messages in order, so this list is
+                          // already filtered to the project chosen by `/cd`.
+                          _openOptionPicker('/resume');
+                          return;
+                        }
                         widget.client.sendPrompt(it.command);
                       },
                     );
@@ -1482,135 +1670,12 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
   }
 
   Widget _buildCommandsDrawer() {
-    final commands = [
-      (Icons.menu_book_rounded, 'Obsidian · Prompts', '/obsidian'),
-      (Icons.radar, 'Escanear PC y proyectos', '/scan'),
-      (Icons.info_outline, 'Estado del sistema', '/status'),
-      (Icons.folder_outlined, 'Cambiar proyecto', '/project'),
-      (Icons.memory, 'Cambiar modelo', '/model'),
-      (Icons.history, 'Historial de chats', '/resume'),
-      (Icons.add_comment_outlined, 'Nuevo chat limpio', '/new'),
-      (Icons.data_usage, 'Cuotas de tokens', '/tokens'),
-      (Icons.stop_circle_outlined, 'Detener ejecución', '/stop'),
-    ];
-
-    return Drawer(
-      backgroundColor: const Color(0xFF15181C),
-      child: SafeArea(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const Padding(
-              padding: EdgeInsets.fromLTRB(20, 20, 20, 12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Comandos rápidos',
-                    style: TextStyle(
-                      color: Color(0xFFE6EDF3),
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  SizedBox(height: 2),
-                  Text(
-                    'Build $currentAppBuildNumber',
-                    style: TextStyle(color: Color(0xFF6E7681), fontSize: 11),
-                  ),
-                ],
-              ),
-            ),
-            const Divider(color: Color(0xFF21262D), height: 1),
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                children: [
-                  for (final item in commands)
-                    ListTile(
-                      leading: Icon(item.$1, color: const Color(0xFF8B949E), size: 20),
-                      title: Text(
-                        item.$2,
-                        style: const TextStyle(color: Color(0xFFE6EDF3), fontSize: 14),
-                      ),
-                      subtitle: Text(
-                        item.$3,
-                        style: const TextStyle(color: Color(0xFF6E7681), fontSize: 12),
-                      ),
-                      onTap: () {
-                        Navigator.of(context).pop();
-                        if (item.$3 == '/stop') {
-                          widget.client.stopExecution();
-                        } else if (item.$3 == '/obsidian') {
-                          _openObsidianVault();
-                        } else if (item.$3 == '/model' ||
-                            item.$3 == '/project' ||
-                            item.$3 == '/resume') {
-                          _openOptionPicker(item.$3);
-                        } else {
-                          widget.client.sendPrompt(item.$3);
-                        }
-                      },
-                    ),
-                  const Divider(color: Color(0xFF21262D), height: 16),
-                  ListTile(
-                    leading: const Icon(Icons.face_retouching_natural, color: Color(0xFF8B949E), size: 20),
-                    title: const Text(
-                      'Personalizar personaje',
-                      style: TextStyle(color: Color(0xFFE6EDF3), fontSize: 14),
-                    ),
-                    subtitle: const Text(
-                      'Estilo, accesorios, color o .riv',
-                      style: TextStyle(color: Color(0xFF6E7681), fontSize: 12),
-                    ),
-                    onTap: () {
-                      Navigator.of(context).pop();
-                      _openAvatarCustomizer();
-                    },
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.tune, color: Color(0xFF8B949E), size: 20),
-                    title: const Text(
-                      'Ajustes y conexión',
-                      style: TextStyle(color: Color(0xFFE6EDF3), fontSize: 14),
-                    ),
-                    subtitle: const Text(
-                      'Nombre, URL Tailscale y Token',
-                      style: TextStyle(color: Color(0xFF6E7681), fontSize: 12),
-                    ),
-                    onTap: () {
-                      Navigator.of(context).pop();
-                      _openConnectionSheet();
-                    },
-                  ),
-                  if (widget.client.updateAvailable) ...[
-                    const Divider(color: Color(0xFF21262D), height: 16),
-                    ListTile(
-                      leading: const Icon(Icons.system_update, color: Color(0xFF3FB950), size: 20),
-                      title: Text(
-                        'Actualizar App (${widget.client.availableVersion})',
-                        style: const TextStyle(
-                          color: Color(0xFF3FB950),
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      subtitle: const Text(
-                        'Nueva versión disponible por Tailscale',
-                        style: TextStyle(color: Color(0xFF8B949E), fontSize: 11),
-                      ),
-                      onTap: () {
-                        Navigator.of(context).pop();
-                        widget.client.installAvailableUpdate();
-                      },
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
+    return CommandsDrawer(
+      client: widget.client,
+      onOpenObsidianVault: _openObsidianVault,
+      onOpenOptionPicker: _openOptionPicker,
+      onOpenAvatarCustomizer: _openAvatarCustomizer,
+      onOpenSettings: _openConnectionSheet,
     );
   }
   Future<void> _toggleVoiceInput() async {
@@ -1732,14 +1797,12 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
                       selected: _avatarStyle == s &&
                           _customRivePath == null &&
                           _customPhotoPath == null &&
-                          _customGlbPath == null &&
                           _geminiProfile == null,
                       onSelected: (_) {
                         setState(() {
                           _avatarStyle = s;
                           _customRivePath = null;
                           _customPhotoPath = null;
-                          _customGlbPath = null;
                           _geminiProfile = null;
                         });
                         _saveAvatarPrefs();
@@ -1873,16 +1936,9 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
                   final path = picked.first.path;
                   if (path == null) return;
                   final lower = path.toLowerCase();
-                  if (lower.endsWith('.glb') || lower.endsWith('.gltf')) {
-                    setState(() {
-                      _customGlbPath = path;
-                      _customPhotoPath = null;
-                      _customRivePath = null;
-                    });
-                  } else if (lower.endsWith('.riv')) {
+                  if (lower.endsWith('.riv')) {
                     setState(() {
                       _customRivePath = path;
-                      _customGlbPath = null;
                       _customPhotoPath = null;
                     });
                   } else {
@@ -1893,11 +1949,9 @@ class _CompanionScreenState extends State<CompanionScreen> with WidgetsBindingOb
                 },
                 icon: const Icon(Icons.view_in_ar_rounded, size: 18),
                 label: Text(
-                  _customGlbPath != null
-                      ? 'Modelo 3D activo: ${_customGlbPath!.split('/').last}'
-                      : (_customRivePath != null
-                          ? 'Rive activo: ${_customRivePath!.split('/').last}'
-                          : 'Importar modelo 3D (.glb) o animación (.riv)'),
+                  _customRivePath != null
+                      ? 'Rive activo: ${_customRivePath!.split('/').last}'
+                      : 'Importar animación (.riv)',
                 ),
               ),
             ],

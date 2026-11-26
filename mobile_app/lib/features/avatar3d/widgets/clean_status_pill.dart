@@ -23,6 +23,8 @@ Color avatarAccentForState(Avatar3DState state) {
       return const Color(0xFF3FB950);
     case Avatar3DState.error:
       return const Color(0xFFF85149);
+    case Avatar3DState.awaitingApproval:
+      return const Color(0xFFE3B341);
     case Avatar3DState.idle:
       return const Color(0xFF8B949E);
   }
@@ -46,6 +48,8 @@ IconData avatarIconForState(Avatar3DState state) {
       return Icons.check_rounded;
     case Avatar3DState.error:
       return Icons.warning_amber_rounded;
+    case Avatar3DState.awaitingApproval:
+      return Icons.front_hand_rounded;
     case Avatar3DState.idle:
       return Icons.circle_outlined;
   }

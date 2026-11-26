@@ -1,26 +1,17 @@
-/// Contract between the Go `agent_status` WebSocket event and the 3D avatar.
-///
-/// Clip names and blendshape keys must match `assets/models/agent.glb`
-/// (see `assets/models/AVATAR_SPEC.md`).
+/// Avatar states driven by the Go `agent_status` WebSocket event.
 enum Avatar3DState {
-  idle('Idle', true, {'mouthSmile': 0.25}),
-  starting('Thinking', true, {'browInnerUp': 0.35, 'eyeWide': 0.2}),
-  thinking('Thinking', true, {'browInnerUp': 0.6}),
-  codingEdit('Coding_Laptop', true, {'browDown': 0.35}),
-  executing('Executing_Terminal', true, {'eyeWide': 0.4}),
-  reading('Reading_Code', true, {'browDown': 0.15}),
-  wrappingUp('Coding_Laptop', true, {'mouthSmile': 0.45}),
-  success('Success_Celebrate', false, {'mouthSmile': 0.95}),
-  error('Error_Shock', true, {'eyeWide': 0.7, 'browInnerUp': 0.5});
+  idle,
+  starting,
+  thinking,
+  codingEdit,
+  executing,
+  reading,
+  wrappingUp,
+  success,
+  error,
 
-  final String clip;
-  final bool loop;
-
-  /// Logical blendshape weights. A key such as `mouthSmile` also drives
-  /// `mouthSmileLeft` / `mouthSmileRight` when the model splits them.
-  final Map<String, double> blendshapes;
-
-  const Avatar3DState(this.clip, this.loop, this.blendshapes);
+  /// Client-side only: a tool call is waiting for approval on the phone.
+  awaitingApproval;
 
   bool get isUsingLaptop =>
       this == Avatar3DState.codingEdit ||
@@ -31,7 +22,8 @@ enum Avatar3DState {
   bool get isWorking =>
       this != Avatar3DState.idle &&
       this != Avatar3DState.success &&
-      this != Avatar3DState.error;
+      this != Avatar3DState.error &&
+      this != Avatar3DState.awaitingApproval;
 
   static Avatar3DState fromWire(String? raw) {
     switch (raw?.toUpperCase().trim()) {
@@ -60,13 +52,6 @@ enum Avatar3DState {
   }
 }
 
-/// One-shot reaction clip played on tap while idle.
-const String kAvatarWaveClip = 'Wave';
-
-/// Blendshapes the procedural blink loop drives.
-const List<String> kBlinkShapes = ['eyeBlinkLeft', 'eyeBlinkRight'];
-
-const Duration kAvatarCrossFade = Duration(milliseconds: 250);
 const Duration kAvatarSuccessHold = Duration(milliseconds: 3500);
 
 /// Payload of `{"type":"agent_status", ...}`.

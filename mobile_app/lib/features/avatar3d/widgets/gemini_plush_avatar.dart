@@ -42,11 +42,15 @@ class GeminiCharacterAvatar extends StatefulWidget {
   final Avatar3DState state;
   final Color? boxBackgroundColor;
 
+  /// Animates the mouth while the reply is streaming in.
+  final bool speaking;
+
   const GeminiCharacterAvatar({
     super.key,
     required this.profile,
     required this.state,
     this.boxBackgroundColor,
+    this.speaking = false,
   });
 
   @override
@@ -83,6 +87,7 @@ class _GeminiCharacterAvatarState extends State<GeminiCharacterAvatar>
             state: widget.state,
             phase: _anim.value,
             boxBackgroundColor: widget.boxBackgroundColor,
+            speaking: widget.speaking,
           ),
         );
       },
@@ -95,17 +100,21 @@ class _GeminiCharacterPainter extends CustomPainter {
   final Avatar3DState state;
   final double phase;
   final Color? boxBackgroundColor;
+  final bool speaking;
 
   const _GeminiCharacterPainter({
     required this.profile,
     required this.state,
     required this.phase,
     this.boxBackgroundColor,
+    this.speaking = false,
   });
 
   Color _shiftLightness(Color c, double delta) {
     final hsl = HSLColor.fromColor(c);
-    return hsl.withLightness((hsl.lightness + delta).clamp(0.06, 0.96)).toColor();
+    return hsl
+        .withLightness((hsl.lightness + delta).clamp(0.06, 0.96))
+        .toColor();
   }
 
   @override
@@ -155,7 +164,8 @@ class _GeminiCharacterPainter extends CustomPainter {
       final earPaint = Paint()
         ..shader = RadialGradient(
           colors: [suitLight, suitDark],
-        ).createShader(Rect.fromCircle(center: Offset(cx, bodyCy - 20), radius: 30));
+        ).createShader(
+            Rect.fromCircle(center: Offset(cx, bodyCy - 20), radius: 30));
       canvas.drawCircle(Offset(cx - 17, bodyCy - 24), 7.5, earPaint);
       canvas.drawCircle(Offset(cx + 17, bodyCy - 24), 7.5, earPaint);
       canvas.drawCircle(
@@ -176,7 +186,8 @@ class _GeminiCharacterPainter extends CustomPainter {
       radius: 0.95,
       colors: [suitLight, suitBase, suitDark],
       stops: const [0.0, 0.62, 1.0],
-    ).createShader(Rect.fromCenter(center: Offset(cx, bodyCy), width: 64, height: 64));
+    ).createShader(
+        Rect.fromCenter(center: Offset(cx, bodyCy), width: 64, height: 64));
 
     final plushPaint = Paint()..shader = plushShader;
 
@@ -193,9 +204,16 @@ class _GeminiCharacterPainter extends CustomPainter {
     );
     canvas.restore();
 
+    // Awaiting approval: right arm raised and waving, like asking for a turn.
+    final raiseHand = state == Avatar3DState.awaitingApproval;
     canvas.save();
-    canvas.translate(cx + 21, bodyCy + 11 + armLift);
-    canvas.rotate(-0.42);
+    if (raiseHand) {
+      canvas.translate(cx + 24, bodyCy - 2);
+      canvas.rotate(-2.75 + math.sin(t * 4) * 0.18);
+    } else {
+      canvas.translate(cx + 21, bodyCy + 11 + armLift);
+      canvas.rotate(-0.42);
+    }
     canvas.drawRRect(
       RRect.fromRectAndRadius(
         Rect.fromCenter(center: Offset.zero, width: 14, height: 22),
@@ -208,9 +226,11 @@ class _GeminiCharacterPainter extends CustomPainter {
     if (isHooded) {
       final hoodPath = Path()
         ..moveTo(cx, bodyCy - 27)
-        ..cubicTo(cx + 21, bodyCy - 27, cx + 22, bodyCy - 4, cx + 24, bodyCy + 14)
+        ..cubicTo(
+            cx + 21, bodyCy - 27, cx + 22, bodyCy - 4, cx + 24, bodyCy + 14)
         ..cubicTo(cx + 25, bodyCy + 24, cx + 17, bodyCy + 27, cx, bodyCy + 27)
-        ..cubicTo(cx - 17, bodyCy + 27, cx - 25, bodyCy + 24, cx - 24, bodyCy + 14)
+        ..cubicTo(
+            cx - 17, bodyCy + 27, cx - 25, bodyCy + 24, cx - 24, bodyCy + 14)
         ..cubicTo(cx - 22, bodyCy - 4, cx - 21, bodyCy - 27, cx, bodyCy - 27)
         ..close();
       canvas.drawPath(hoodPath, plushPaint);
@@ -383,7 +403,8 @@ class _GeminiCharacterPainter extends CustomPainter {
           const Color(0xFFE88D82).withValues(alpha: blushAlpha),
           const Color(0xFFE88D82).withValues(alpha: 0.0),
         ],
-      ).createShader(Rect.fromCircle(center: faceCenter.translate(-9.5, 3.5), radius: 5.8));
+      ).createShader(Rect.fromCircle(
+          center: faceCenter.translate(-9.5, 3.5), radius: 5.8));
     canvas.drawCircle(faceCenter.translate(-9.5, 3.5), 5.8, blushPaint);
 
     final blushRightPaint = Paint()
@@ -392,7 +413,8 @@ class _GeminiCharacterPainter extends CustomPainter {
           const Color(0xFFE88D82).withValues(alpha: blushAlpha),
           const Color(0xFFE88D82).withValues(alpha: 0.0),
         ],
-      ).createShader(Rect.fromCircle(center: faceCenter.translate(9.5, 3.5), radius: 5.8));
+      ).createShader(
+          Rect.fromCircle(center: faceCenter.translate(9.5, 3.5), radius: 5.8));
     canvas.drawCircle(faceCenter.translate(9.5, 3.5), 5.8, blushRightPaint);
 
     // 7. Glossy Bead Eyes + Feminine Curved Eyelashes + Blink + Eye Tracking
@@ -400,7 +422,9 @@ class _GeminiCharacterPainter extends CustomPainter {
     final gazeX = state.isUsingLaptop
         ? math.sin(t * 2) * 1.8
         : (state == Avatar3DState.thinking ? 1.8 : 0.0);
-    final gazeY = state.isUsingLaptop ? 1.6 : (state == Avatar3DState.thinking ? -1.4 : 0.0);
+    final gazeY = state.isUsingLaptop
+        ? 1.6
+        : (state == Avatar3DState.thinking ? -1.4 : 0.0);
 
     final leftEye = faceCenter.translate(-6.8 + gazeX, -0.5 + gazeY);
     final rightEye = faceCenter.translate(6.8 + gazeX, -0.5 + gazeY);
@@ -410,8 +434,10 @@ class _GeminiCharacterPainter extends CustomPainter {
       ..strokeCap = StrokeCap.round;
 
     if (isBlinking) {
-      canvas.drawLine(leftEye.translate(-2.8, 0), leftEye.translate(2.8, 0), eyePaint);
-      canvas.drawLine(rightEye.translate(-2.8, 0), rightEye.translate(2.8, 0), eyePaint);
+      canvas.drawLine(
+          leftEye.translate(-2.8, 0), leftEye.translate(2.8, 0), eyePaint);
+      canvas.drawLine(
+          rightEye.translate(-2.8, 0), rightEye.translate(2.8, 0), eyePaint);
     } else {
       canvas.drawCircle(leftEye, 2.7, eyePaint);
       canvas.drawCircle(rightEye, 2.7, eyePaint);
@@ -455,21 +481,24 @@ class _GeminiCharacterPainter extends CustomPainter {
         ..strokeWidth = 1.3;
       canvas.drawCircle(leftEye, 4.8, gPaint);
       canvas.drawCircle(rightEye, 4.8, gPaint);
-      canvas.drawLine(leftEye.translate(4.8, 0), rightEye.translate(-4.8, 0), gPaint);
+      canvas.drawLine(
+          leftEye.translate(4.8, 0), rightEye.translate(-4.8, 0), gPaint);
     }
 
     if (profile.variant == 'cyber_pod' || profile.headwear == 'headphones') {
       final cupPaint = Paint()..color = accent;
       canvas.drawRRect(
         RRect.fromRectAndRadius(
-          Rect.fromCenter(center: faceCenter.translate(-21, 0), width: 5, height: 12),
+          Rect.fromCenter(
+              center: faceCenter.translate(-21, 0), width: 5, height: 12),
           const Radius.circular(2.5),
         ),
         cupPaint,
       );
       canvas.drawRRect(
         RRect.fromRectAndRadius(
-          Rect.fromCenter(center: faceCenter.translate(21, 0), width: 5, height: 12),
+          Rect.fromCenter(
+              center: faceCenter.translate(21, 0), width: 5, height: 12),
           const Radius.circular(2.5),
         ),
         cupPaint,
@@ -480,29 +509,46 @@ class _GeminiCharacterPainter extends CustomPainter {
     if (!profile.isFeminine && profile.facialHair != 'none') {
       canvas.drawRRect(
         RRect.fromRectAndRadius(
-          Rect.fromCenter(center: faceCenter.translate(0, 7.2), width: 12, height: 3.2),
+          Rect.fromCenter(
+              center: faceCenter.translate(0, 7.2), width: 12, height: 3.2),
           const Radius.circular(2),
         ),
         Paint()..color = hair.withValues(alpha: 0.7),
       );
     }
 
+    final mouthColor =
+        profile.isFeminine ? const Color(0xFF8C3B3B) : const Color(0xFF1E1916);
     final mouthPaint = Paint()
-      ..color = profile.isFeminine ? const Color(0xFF8C3B3B) : const Color(0xFF1E1916)
+      ..color = mouthColor
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5
       ..strokeCap = StrokeCap.round;
-    canvas.drawArc(
-      Rect.fromCenter(
-        center: faceCenter.translate(0, 2.2),
-        width: state == Avatar3DState.success ? 8.5 : 5.5,
-        height: state == Avatar3DState.success ? 5.5 : 3.5,
-      ),
-      0.15,
-      math.pi - 0.3,
-      false,
-      mouthPaint,
-    );
+    if (speaking) {
+      // Two overlapping frequencies so the mouth doesn't open in a mechanical beat.
+      final open =
+          (math.sin(t * 9).abs() * 0.7 + math.sin(t * 5.3).abs() * 0.3);
+      canvas.drawOval(
+        Rect.fromCenter(
+          center: faceCenter.translate(0, 3.2),
+          width: 5.5,
+          height: 1.2 + open * 3.6,
+        ),
+        Paint()..color = mouthColor,
+      );
+    } else {
+      canvas.drawArc(
+        Rect.fromCenter(
+          center: faceCenter.translate(0, 2.2),
+          width: state == Avatar3DState.success ? 8.5 : 5.5,
+          height: state == Avatar3DState.success ? 5.5 : 3.5,
+        ),
+        0.15,
+        math.pi - 0.3,
+        false,
+        mouthPaint,
+      );
+    }
 
     canvas.restore();
   }
@@ -512,6 +558,7 @@ class _GeminiCharacterPainter extends CustomPainter {
       oldDelegate.profile != profile ||
       oldDelegate.state != state ||
       oldDelegate.phase != phase ||
+      oldDelegate.speaking != speaking ||
       oldDelegate.boxBackgroundColor != boxBackgroundColor;
 }
 

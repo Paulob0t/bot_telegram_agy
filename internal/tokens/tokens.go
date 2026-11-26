@@ -88,7 +88,6 @@ func FetchAgyQuota(cfg *config.Config) (map[string]AgyQuotaBucket, []ExtraQuota)
 	buckets := map[string]AgyQuotaBucket{
 		"gemini":     {RemainingPct: 100, WeekPct: 100},
 		"claude_gpt": {RemainingPct: 100, WeekPct: 100},
-		"argon":      {WeekPct: 100},
 	}
 	var extras []ExtraQuota
 
@@ -112,7 +111,6 @@ func FetchAgyQuota(cfg *config.Config) (map[string]AgyQuotaBucket, []ExtraQuota)
 
 	g := buckets["gemini"]
 	c := buckets["claude_gpt"]
-	a := buckets["argon"]
 	var freshExtras []ExtraQuota
 
 	for _, rawLine := range strings.Split(string(out), "\n") {
@@ -144,9 +142,6 @@ func FetchAgyQuota(cfg *config.Config) (map[string]AgyQuotaBucket, []ExtraQuota)
 		case strings.Contains(line, "Claude and GPT") && strings.Contains(line, "Weekly Limit"):
 			c.WeekPct = pct
 			c.WeekReset = resetStr
-		case strings.Contains(line, "Gemini 4 Argon"):
-			a.WeekPct = pct
-			a.WeekReset = resetStr
 		default:
 			lbl := strings.TrimSpace(line[:loc[0]])
 			if lbl != "" {
@@ -160,7 +155,6 @@ func FetchAgyQuota(cfg *config.Config) (map[string]AgyQuotaBucket, []ExtraQuota)
 	}
 	buckets["gemini"] = g
 	buckets["claude_gpt"] = c
-	buckets["argon"] = a
 	return buckets, freshExtras
 }
 
@@ -206,7 +200,6 @@ func LoadCachedOrFetch(cfg *config.Config, maxAge time.Duration) Quotas {
 func FormatTelegramDashboard(q Quotas) string {
 	g := q.Antigravity["gemini"]
 	c := q.Antigravity["claude_gpt"]
-	a := q.Antigravity["argon"]
 
 	updatedStr := time.Now().Format("03:04 PM")
 	if t, err := time.Parse(time.RFC3339, q.Timestamp); err == nil {
@@ -223,8 +216,7 @@ func FormatTelegramDashboard(q Quotas) string {
 	sb.WriteString(fmt.Sprintf("• **Gemini 5h:** `%.0f%%` libre · ↻ *%s*\n", g.RemainingPct, fmtISOReset(g.FiveHReset)))
 	sb.WriteString(fmt.Sprintf("• **Gemini Sem:** `%.0f%%` libre · ↻ *%s*\n", g.WeekPct, fmtISOReset(g.WeekReset)))
 	sb.WriteString(fmt.Sprintf("• **Claude/GPT 5h:** `%.0f%%` libre · ↻ *%s*\n", c.RemainingPct, fmtISOReset(c.FiveHReset)))
-	sb.WriteString(fmt.Sprintf("• **Claude/GPT Sem:** `%.0f%%` libre · ↻ *%s*\n", c.WeekPct, fmtISOReset(c.WeekReset)))
-	sb.WriteString(fmt.Sprintf("• **Argon Sem:** `%.0f%%` libre · ↻ *%s*", a.WeekPct, fmtISOReset(a.WeekReset)))
+	sb.WriteString(fmt.Sprintf("• **Claude/GPT Sem:** `%.0f%%` libre · ↻ *%s*", c.WeekPct, fmtISOReset(c.WeekReset)))
 
 	for _, ex := range q.Extra {
 		sb.WriteString(fmt.Sprintf("\n• **%s:** `%.0f%%` libre · ↻ *%s*", ex.Label, ex.RemainingPct, fmtISOReset(ex.Reset)))
@@ -236,7 +228,6 @@ func WriteWaybarJSON(cfg *config.Config) error {
 	q := FetchAll(cfg)
 	g := q.Antigravity["gemini"]
 	c := q.Antigravity["claude_gpt"]
-	a := q.Antigravity["argon"]
 
 	updatedStr := time.Now().Format("03:04 PM")
 	if t, err := time.Parse(time.RFC3339, q.Timestamp); err == nil {
@@ -252,8 +243,7 @@ func WriteWaybarJSON(cfg *config.Config) error {
 			"  • Gemini 5h:      %3.0f%% libre  · ↻ %s\n"+
 			"  • Gemini Sem:     %3.0f%% libre  · ↻ %s\n"+
 			"  • Claude/GPT 5h:  %3.0f%% libre  · ↻ %s\n"+
-			"  • Claude/GPT Sem: %3.0f%% libre  · ↻ %s\n"+
-			"  • Gemini 4 Argon: %3.0f%% libre  · ↻ %s",
+			"  • Claude/GPT Sem: %3.0f%% libre  · ↻ %s",
 		updatedStr,
 		q.ClaudeCode.SessionUsedPct, fmtClaudeReset(q.ClaudeCode.SessionResets),
 		q.ClaudeCode.WeekUsedPct, fmtClaudeReset(q.ClaudeCode.WeekResets),
@@ -261,7 +251,6 @@ func WriteWaybarJSON(cfg *config.Config) error {
 		g.WeekPct, fmtISOReset(g.WeekReset),
 		c.RemainingPct, fmtISOReset(c.FiveHReset),
 		c.WeekPct, fmtISOReset(c.WeekReset),
-		a.WeekPct, fmtISOReset(a.WeekReset),
 	)
 
 	payload := map[string]string{
@@ -292,7 +281,6 @@ func ShowRofiDialog(cfg *config.Config, useCache bool) {
 
 	g := q.Antigravity["gemini"]
 	c := q.Antigravity["claude_gpt"]
-	a := q.Antigravity["argon"]
 
 	updatedStr := time.Now().Format("03:04 PM")
 	if t, err := time.Parse(time.RFC3339, q.Timestamp); err == nil {
@@ -311,7 +299,6 @@ func ShowRofiDialog(cfg *config.Config, useCache bool) {
 		fmt.Sprintf("   Gemini · Semanal   [%s]  %5.1f%% libre   · Reinicia: %s", makeBar(g.WeekPct, 12), g.WeekPct, fmtISOReset(g.WeekReset)),
 		fmt.Sprintf("   Claude & GPT · 5h  [%s]  %5.1f%% libre   · Reinicia: %s", makeBar(c.RemainingPct, 12), c.RemainingPct, fmtISOReset(c.FiveHReset)),
 		fmt.Sprintf("   Claude & GPT · Sem [%s]  %5.1f%% libre   · Reinicia: %s", makeBar(c.WeekPct, 12), c.WeekPct, fmtISOReset(c.WeekReset)),
-		fmt.Sprintf("   Gemini 4 Argon·Sem [%s]  %5.1f%% libre   · Reinicia: %s", makeBar(a.WeekPct, 12), a.WeekPct, fmtISOReset(a.WeekReset)),
 	}
 
 	for _, ex := range q.Extra {

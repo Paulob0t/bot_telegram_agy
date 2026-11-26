@@ -13,11 +13,10 @@ dependencies:
   file_picker: ^13.4.0
   http: ^1.2.2
   flutter_local_notifications: ^18.0.1
+  flutter_secure_storage: ^11.2.0
   open_filex: ^4.5.0
   path_provider: ^2.1.5
   speech_to_text: ^7.5.0
-  thermion_flutter: ^0.7.0
-  vector_math: ^2.4.4
 
 dev_dependencies:
   flutter_test:
@@ -28,5 +27,3 @@ flutter:
   uses-material-design: true
   assets:
     - assets/rive/
-    - assets/models/
-    - assets/environments/

@@ -6,12 +6,21 @@ class LocalNotifier {
   static bool _initialized = false;
   static int _seq = 1;
 
+  static const _actionAllow = 'perm_allow';
+  static const _actionDeny = 'perm_deny';
+
+  /// Wired by main(): sends the decision over the live WebSocket.
+  static bool Function(String id, bool allow)? onPermissionAction;
+
   static Future<void> init() async {
     if (_initialized) return;
     try {
       const androidInit = AndroidInitializationSettings('@drawable/ic_notification');
       const initSettings = InitializationSettings(android: androidInit);
-      await _plugin.initialize(initSettings);
+      await _plugin.initialize(
+        initSettings,
+        onDidReceiveNotificationResponse: _onResponse,
+      );
 
       final androidImpl = _plugin.resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin>();
@@ -66,6 +75,74 @@ class LocalNotifier {
       );
       final details = NotificationDetails(android: androidDetails);
       await _plugin.show(_seq++, cleanTitle, collapsedText, details);
+    } catch (_) {}
+  }
+
+  static void _onResponse(NotificationResponse r) {
+    final id = r.payload;
+    if (id == null || id.isEmpty) return;
+    if (r.actionId == _actionAllow) {
+      onPermissionAction?.call(id, true);
+    } else if (r.actionId == _actionDeny) {
+      onPermissionAction?.call(id, false);
+    }
+  }
+
+  // Stable per-request id so the notification can be cancelled once answered elsewhere.
+  static int _permissionNotificationId(String id) =>
+      0x40000000 | (id.hashCode & 0x3FFFFFFF);
+
+  static Future<void> showPermission(
+    String id,
+    String tool,
+    String detail,
+    String workspace,
+  ) async {
+    if (!_initialized) return;
+    try {
+      final title = workspace.isEmpty
+          ? 'Claude quiere usar $tool'
+          : 'Claude quiere usar $tool · $workspace';
+      final androidDetails = AndroidNotificationDetails(
+        'paulobot_approvals',
+        'Aprobaciones de herramientas',
+        channelDescription: 'Claude espera tu permiso para ejecutar algo en tu PC',
+        icon: '@drawable/ic_notification',
+        importance: Importance.max,
+        priority: Priority.max,
+        category: AndroidNotificationCategory.reminder,
+        ongoing: true,
+        autoCancel: false,
+        styleInformation: BigTextStyleInformation(detail, contentTitle: title),
+        actions: const [
+          AndroidNotificationAction(
+            _actionAllow,
+            'Aprobar',
+            showsUserInterface: true,
+            cancelNotification: true,
+          ),
+          AndroidNotificationAction(
+            _actionDeny,
+            'Rechazar',
+            showsUserInterface: true,
+            cancelNotification: true,
+          ),
+        ],
+      );
+      await _plugin.show(
+        _permissionNotificationId(id),
+        title,
+        detail,
+        NotificationDetails(android: androidDetails),
+        payload: id,
+      );
+    } catch (_) {}
+  }
+
+  static Future<void> cancelPermission(String id) async {
+    if (!_initialized) return;
+    try {
+      await _plugin.cancel(_permissionNotificationId(id));
     } catch (_) {}
   }
 }

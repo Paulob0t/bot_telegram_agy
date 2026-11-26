@@ -1,11 +1,15 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:paulobot_mobile/models/agent_event.dart';
 import 'package:paulobot_mobile/services/ws_client.dart';
 
 void main() {
+  // Direct mode: with the hub enabled (the default) connect() would look up a Gist over the network.
+  setUp(() => FlutterSecureStorage.setMockInitialValues({'hub_relay_enabled': 'false'}));
+
   test('AgyWsClient inicia en sleeping y maneja ciclo completo sobre WebSocket', () async {
     late HttpServer server;
     String? receivedAuth;

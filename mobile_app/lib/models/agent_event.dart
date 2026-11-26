@@ -28,7 +28,15 @@ enum CharacterState {
   }
 }
 
-enum AgentEventType { state, chunk, notify, error, agentStatus, unknown }
+enum AgentEventType {
+  state,
+  chunk,
+  notify,
+  error,
+  agentStatus,
+  permissionRequest,
+  unknown,
+}
 
 /// Evento recibido desde el servidor Go sobre WebSocket.
 class AgentEvent {
@@ -39,6 +47,7 @@ class AgentEvent {
   final String toolStatus;
   final bool done;
   final String message;
+  final String sessionId;
   final AgentActivity? activity;
 
   const AgentEvent({
@@ -50,15 +59,18 @@ class AgentEvent {
     this.toolStatus = '',
     this.done = false,
     this.message = '',
+    this.sessionId = '',
   });
 
   factory AgentEvent.fromJson(Map<String, dynamic> json) {
     final rawType = (json['type'] as String? ?? '').toLowerCase().trim();
+    final sid = json['session_id'] as String? ?? '';
     switch (rawType) {
       case 'state':
         return AgentEvent(
           type: AgentEventType.state,
           state: CharacterState.fromWire(json['state'] as String?),
+          sessionId: sid,
         );
       case 'chunk':
         return AgentEvent(
@@ -66,6 +78,7 @@ class AgentEvent {
           text: json['text'] as String? ?? '',
           toolStatus: json['tool_status'] as String? ?? '',
           done: json['done'] as bool? ?? false,
+          sessionId: sid,
         );
       case 'notify':
         return AgentEvent(
@@ -73,16 +86,30 @@ class AgentEvent {
           title: json['title'] as String? ?? 'HyprAgent',
           text: json['text'] as String? ?? '',
           done: true,
+          sessionId: sid,
         );
       case 'agent_status':
         return AgentEvent(
           type: AgentEventType.agentStatus,
           activity: AgentActivity.fromJson(json),
+          sessionId: sid,
+        );
+      // title = workspace, text = command/file, toolStatus = tool, message = request id.
+      // done = true means the request was answered or expired elsewhere.
+      case 'permission_request':
+        return AgentEvent(
+          type: AgentEventType.permissionRequest,
+          title: json['title'] as String? ?? '',
+          text: json['detail'] as String? ?? '',
+          toolStatus: json['label'] as String? ?? '',
+          message: json['message'] as String? ?? '',
+          done: json['done'] as bool? ?? false,
         );
       case 'error':
         return AgentEvent(
           type: AgentEventType.error,
           message: json['message'] as String? ?? 'Error desconocido',
+          sessionId: sid,
         );
       default:
         return const AgentEvent(type: AgentEventType.unknown);
@@ -93,6 +120,23 @@ class AgentEvent {
     final decoded = jsonDecode(raw) as Map<String, dynamic>;
     return AgentEvent.fromJson(decoded);
   }
+}
+
+/// Tool call waiting for approval from the phone.
+class PermissionRequest {
+  final String id;
+  final String tool;
+  final String detail;
+  final String workspace;
+  final DateTime receivedAt;
+
+  const PermissionRequest({
+    required this.id,
+    required this.tool,
+    required this.detail,
+    required this.workspace,
+    required this.receivedAt,
+  });
 }
 
 /// Mensaje en el historial conversacional del cliente móvil.

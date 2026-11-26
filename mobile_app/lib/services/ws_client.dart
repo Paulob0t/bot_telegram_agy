@@ -9,10 +9,36 @@ import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
 import '../features/avatar3d/models/avatar3d_state.dart';
 import '../models/agent_event.dart';
+import 'gist_discovery_service.dart';
+import 'hub_credentials_store.dart';
 import 'notifications.dart';
 
-const int currentAppBuildNumber = int.fromEnvironment('APP_BUILD', defaultValue: 24);
-const String _ntfyTunnelTopic = 'hypragent-paulobot-tunnel';
+const int currentAppBuildNumber = int.fromEnvironment('APP_BUILD', defaultValue: 25);
+
+/// Sesión aislada (proyecto + resume/chat) con su propio historial y TTL de 1h.
+class SessionEntry {
+  final String id;
+  final String project;
+  final String title;
+  DateTime lastActivity;
+  final List<ChatMessage> messages;
+  bool isWorking;
+  bool hasUnread;
+
+  SessionEntry({
+    required this.id,
+    required this.project,
+    required this.title,
+    DateTime? lastActivity,
+    List<ChatMessage>? messages,
+    this.isWorking = false,
+    this.hasUnread = false,
+  })  : lastActivity = lastActivity ?? DateTime.now(),
+        messages = messages ?? [];
+
+  String get displayLabel =>
+      project.isNotEmpty ? '$project · $title' : title;
+}
 
 /// Cliente WebSocket resiliente con reconexión exponencial y sincronización
 /// directa con la State Machine de Rive (`idle`, `listening`, `thinking`, `speaking`, `sleeping`).
@@ -33,10 +59,47 @@ class AgyWsClient extends ChangeNotifier {
   CharacterState _characterState = CharacterState.sleeping;
   final List<ChatMessage> _messages = [];
   final List<ChatMessage> _notifications = [];
+  final List<PermissionRequest> _pendingPermissions = [];
   int _unreadNotifications = 0;
   String? _activeStreamingMsgId;
   String? _lastError;
   bool isAppInForeground = true;
+  HubCredentials? _hubCreds;
+  bool _needsSetup = false;
+
+  /// True when neither the hub nor a direct URL is configured.
+  bool get needsSetup => _needsSetup;
+  HubCredentials? get hubCredentials => _hubCreds;
+  String _hubStatusText = '';
+  String _activeWorker = '';
+  bool _debugMode = false;
+  bool _forceCelHome = false;
+  final List<String> _debugLogs = [];
+  final List<SessionEntry> _sessions = [];
+  String? _activeSessionId;
+  String? _streamingTargetSessionId;
+  final Map<String, String> _sessionStreamingMsgIds = {};
+  Completer<Map<String, dynamic>>? _optionsCompleter;
+
+  Future<Map<String, dynamic>?> fetchOptionsOverWs(String cmd) async {
+    if (!isConnected) return null;
+    _optionsCompleter?.completeError(Exception('cancelled'));
+    final c = Completer<Map<String, dynamic>>();
+    _optionsCompleter = c;
+    _socket!.add(jsonEncode({
+      'text': '__options__:$cmd',
+      'session_id': _activeSessionId ?? 'default',
+    }));
+    try {
+      return await c.future.timeout(const Duration(seconds: 8));
+    } catch (_) {
+      return null;
+    } finally {
+      if (_optionsCompleter == c) {
+        _optionsCompleter = null;
+      }
+    }
+  }
 
   bool _updateAvailable = false;
   String _availableVersion = '';
@@ -66,13 +129,174 @@ class AgyWsClient extends ChangeNotifier {
   CharacterState get characterState => _characterState;
 
   AgentActivity _activity = AgentActivity.idle;
-  AgentActivity get activity => _activity;
+  /// A pending tool approval outranks whatever the PC reports: the agent is blocked on us.
+  AgentActivity get activity => _pendingPermissions.isEmpty
+      ? _activity
+      : AgentActivity(
+          state: Avatar3DState.awaitingApproval,
+          label: 'Esperando tu OK · ${_pendingPermissions.first.tool}',
+          detail: _pendingPermissions.first.detail,
+          engine: _activity.engine,
+        );
   List<ChatMessage> get messages => List.unmodifiable(_messages);
   List<ChatMessage> get notifications => List.unmodifiable(_notifications);
+  List<PermissionRequest> get pendingPermissions =>
+      List.unmodifiable(_pendingPermissions);
+
+  /// Answers a tool approval request. Returns false when the socket is down.
+  bool respondPermission(String id, bool allow) {
+    if (!isConnected) return false;
+    try {
+      _socket!.add(jsonEncode({
+        'text': '__perm__:$id:${allow ? 'allow' : 'deny'}',
+        'session_id': _activeSessionId ?? 'default',
+      }));
+    } catch (_) {
+      return false;
+    }
+    _pendingPermissions.removeWhere((p) => p.id == id);
+    LocalNotifier.cancelPermission(id);
+    notifyListeners();
+    return true;
+  }
   int get unreadNotifications => _unreadNotifications;
   String? get lastError => _lastError;
+  String get hubStatusText => _hubStatusText;
+  String get activeWorker => _activeWorker;
+  bool get debugMode => _debugMode;
+  bool get forceCelHome => _forceCelHome;
+  List<String> get debugLogs => List.unmodifiable(_debugLogs);
+
+  void setDebugMode(bool enabled) {
+    _debugMode = enabled;
+    if (enabled) {
+      _addDebugLog('Debug activado (worker: ${_activeWorker.isEmpty ? "?" : _activeWorker})');
+    }
+    notifyListeners();
+  }
+
+  void setForceCelHome(bool enabled) {
+    _forceCelHome = enabled;
+    _addDebugLog(enabled ? '→ Forzando Cel Home' : '→ Volviendo a PC');
+    if (isConnected) {
+      try {
+        _socket!.add(jsonEncode({'type': 'set_debug', 'enabled': enabled}));
+      } catch (_) {}
+    }
+    notifyListeners();
+  }
+
+  void clearDebugLogs() {
+    _debugLogs.clear();
+    notifyListeners();
+  }
+
+  void _addDebugLog(String line) {
+    if (!_debugMode) return;
+    final now = DateTime.now();
+    final ts = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}';
+    _debugLogs.add('[$ts] $line');
+    if (_debugLogs.length > 80) {
+      _debugLogs.removeAt(0);
+    }
+  }
+  List<SessionEntry> get sessions {
+    _pruneIdleSessions();
+    return List.unmodifiable(_sessions);
+  }
+
+  SessionEntry? get activeSession {
+    if (_activeSessionId == null) return null;
+    for (final s in _sessions) {
+      if (s.id == _activeSessionId) return s;
+    }
+    return null;
+  }
+
+  void _pruneIdleSessions() {
+    final cutoff = DateTime.now().subtract(const Duration(hours: 1));
+    _sessions.removeWhere((s) => s.lastActivity.isBefore(cutoff));
+    if (_activeSessionId != null &&
+        !_sessions.any((s) => s.id == _activeSessionId)) {
+      _activeSessionId = null;
+    }
+  }
+
+  void openSession({
+    required String id,
+    required String project,
+    required String title,
+  }) {
+    _pruneIdleSessions();
+    if (_activeSessionId != null) {
+      for (final s in _sessions) {
+        if (s.id == _activeSessionId) {
+          s.messages
+            ..clear()
+            ..addAll(_messages);
+          s.lastActivity = DateTime.now();
+          break;
+        }
+      }
+    } else if (_messages.isNotEmpty) {
+      final defEntry = SessionEntry(
+        id: 'default',
+        project: 'Principal',
+        title: 'Chat inicial',
+      )..messages.addAll(_messages);
+      _sessions.insert(0, defEntry);
+      if (_streamingTargetSessionId == null) {
+        _streamingTargetSessionId = 'default';
+      }
+    }
+    final existingIdx = _sessions.indexWhere((s) => s.id == id);
+    if (existingIdx >= 0) {
+      final s = _sessions[existingIdx];
+      s.lastActivity = DateTime.now();
+      s.hasUnread = false;
+      _activeSessionId = s.id;
+      _messages
+        ..clear()
+        ..addAll(s.messages);
+    } else {
+      final entry = SessionEntry(id: id, project: project, title: title);
+      _sessions.insert(0, entry);
+      _activeSessionId = entry.id;
+      _messages.clear();
+    }
+    _activeStreamingMsgId = null;
+    notifyListeners();
+  }
+
+  void killSession(String id) {
+    _sessions.removeWhere((s) => s.id == id);
+    if (_activeSessionId == id) {
+      _activeSessionId = null;
+      _messages.clear();
+      _activeStreamingMsgId = null;
+      stopExecution();
+    }
+    notifyListeners();
+  }
+
   bool get updateAvailable => _updateAvailable;
   String get availableVersion => _availableVersion;
+
+  /// Limpia los mensajes locales (al cambiar de proyecto o sesión /resume).
+  void clearMessages() {
+    _messages.clear();
+    _activeStreamingMsgId = null;
+    notifyListeners();
+  }
+
+  /// Guarda credenciales del Hub Relay y reconecta usando Gist Discovery.
+  Future<void> configureHubRelay(HubCredentials creds) async {
+    _hubCreds = creds;
+    await HubCredentialsStore.save(creds);
+    _retryAttempt = 0;
+    await disconnect();
+    await connect();
+  }
 
   /// Actualiza endpoint de Tailscale y Bearer Token en caliente y reconecta.
   Future<void> updateCredentials({
@@ -82,6 +306,7 @@ class AgyWsClient extends ChangeNotifier {
   }) async {
     _wsUrl = wsUrl.trim();
     _bearerToken = bearerToken.trim();
+    await HubCredentialsStore.saveDirect(_wsUrl, _bearerToken);
     if (userId != null && userId.trim().isNotEmpty) {
       _userId = userId.trim();
     }
@@ -90,34 +315,7 @@ class AgyWsClient extends ChangeNotifier {
     await connect();
   }
 
-  Future<String?> _fetchNtfyTunnelUrl() async {
-    try {
-      final client = HttpClient()..connectionTimeout = const Duration(seconds: 4);
-      final req = await client.getUrl(
-        Uri.parse('https://ntfy.sh/$_ntfyTunnelTopic/json?poll=1&since=24h'),
-      );
-      final res = await req.close().timeout(const Duration(seconds: 4));
-      if (res.statusCode != 200) return null;
-      final body = await res.transform(utf8.decoder).join();
-      String? latest;
-      for (final line in const LineSplitter().convert(body)) {
-        if (line.trim().isEmpty) continue;
-        final data = jsonDecode(line);
-        if (data is Map && data['message'] is String) {
-          final msg = (data['message'] as String).trim();
-          if (msg.startsWith('wss://') && msg.contains('trycloudflare.com')) {
-            latest = msg;
-          }
-        }
-      }
-      return latest;
-    } catch (_) {
-      return null;
-    }
-  }
-
-  /// Conecta al servidor Go en Tailscale. Si la PC está suspendida o apagada,
-  /// pasa automáticamente a [CharacterState.sleeping] y programa reconexión exponencial.
+  /// Conecta al Hub Relay o al servidor Go configurado.
   Future<void> connect() async {
     if (_disposed || _isConnecting || isConnected) return;
     _manualDisconnect = false;
@@ -125,37 +323,46 @@ class AgyWsClient extends ChangeNotifier {
     notifyListeners();
 
     try {
+      _hubCreds ??= await HubCredentialsStore.load();
+      if (_wsUrl.isEmpty) {
+        final (url, tok) = await HubCredentialsStore.loadDirect();
+        _wsUrl = url;
+        if (_bearerToken.isEmpty) _bearerToken = tok;
+      }
+      final hubReady =
+          _hubCreds != null && _hubCreds!.enabled && _hubCreds!.isComplete;
+      if (!hubReady && _wsUrl.isEmpty) {
+        // Nothing configured yet: wait for the settings sheet instead of retrying forever.
+        _needsSetup = true;
+        _isConnecting = false;
+        _hubStatusText = 'Sin configurar';
+        notifyListeners();
+        return;
+      }
+      _needsSetup = false;
       WebSocket ws;
-      try {
+      if (hubReady) {
+        _hubStatusText = 'Buscando Hub...';
+        notifyListeners();
+        final hubUrl = await GistDiscoveryService().fetchActiveHubUrl(
+          gistId: _hubCreds!.gistId,
+          gistToken: _hubCreds!.gistToken,
+        );
+        final clientWsUrl = GistDiscoveryService.toClientWsUrl(hubUrl);
+        ws = await WebSocket.connect(
+          clientWsUrl,
+          headers: {
+            'Authorization': 'Bearer ${_hubCreds!.hubSecret}',
+          },
+        ).timeout(connectTimeout);
+        _hubStatusText = 'Conectado al Hub';
+      } else {
         ws = await WebSocket.connect(
           _wsUrl,
           headers: {
             'Authorization': 'Bearer $_bearerToken',
           },
         ).timeout(connectTimeout);
-      } catch (_) {
-        // Si Tailscale no está encendido en el cel pero está por USB (adb reverse), probar 127.0.0.1
-        if (!_wsUrl.contains('127.0.0.1') && !_wsUrl.contains('localhost')) {
-          try {
-            ws = await WebSocket.connect(
-              'ws://127.0.0.1:8080/ws',
-              headers: {
-                'Authorization': 'Bearer $_bearerToken',
-              },
-            ).timeout(const Duration(seconds: 2));
-          } catch (_) {
-            final tunnelUrl = await _fetchNtfyTunnelUrl();
-            if (tunnelUrl == null) rethrow;
-            ws = await WebSocket.connect(
-              tunnelUrl,
-              headers: {
-                'Authorization': 'Bearer $_bearerToken',
-              },
-            ).timeout(connectTimeout);
-          }
-        } else {
-          rethrow;
-        }
       }
 
       if (_disposed || _manualDisconnect) {
@@ -221,7 +428,7 @@ class AgyWsClient extends ChangeNotifier {
     final text = rawText.trim();
     if (text.isEmpty || !isConnected) return false;
 
-    if (text == '/new' || text.startsWith('/resume ')) {
+    if (text == '/new') {
       _messages.clear();
       unawaited(_saveLocalHistory());
     }
@@ -235,16 +442,33 @@ class AgyWsClient extends ChangeNotifier {
         timestamp: now,
       ),
     );
-    _activeStreamingMsgId = null;
+    final isControlCmd = text.startsWith('/cd ') ||
+        text.startsWith('/resume ') ||
+        text.startsWith('/model ') ||
+        text == '/new' ||
+        text == '/stop';
+    if (!isControlCmd) {
+      _activeStreamingMsgId = null;
+      _streamingTargetSessionId = _activeSessionId;
+      for (final s in _sessions) {
+        if (s.id == (_activeSessionId ?? 'default')) {
+          s.isWorking = true;
+          s.hasUnread = false;
+          break;
+        }
+      }
+    }
 
     final payload = jsonEncode({
       'user_id': _userId,
       'text': text,
       'timestamp': now.millisecondsSinceEpoch ~/ 1000,
+      'session_id': _activeSessionId ?? 'default',
     });
 
     try {
       _socket!.add(payload);
+      _addDebugLog('→ send: ${text.length > 40 ? "${text.substring(0, 40)}…" : text}');
       _setCharacterState(CharacterState.thinking);
       notifyListeners();
       return true;
@@ -257,6 +481,9 @@ class AgyWsClient extends ChangeNotifier {
 
   /// Envía comando `/stop` para matar inmediatamente el árbol de procesos en Go.
   void stopExecution() {
+    _activeStreamingMsgId = null;
+    _activity = AgentActivity.idle;
+    _setCharacterState(CharacterState.idle);
     if (!isConnected) return;
     final payload = jsonEncode({
       'user_id': _userId,
@@ -406,8 +633,39 @@ class AgyWsClient extends ChangeNotifier {
 
   void _onRawFrame(dynamic raw) {
     if (raw is! String || raw.trim().isEmpty) return;
+    if (raw.contains('"worker_offline"')) {
+      _hubStatusText = 'PC Desconectada / worker_offline';
+      _lastError = _hubStatusText;
+      notifyListeners();
+    }
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map<String, dynamic> && decoded['type'] == 'hub_status') {
+        _activeWorker = decoded['active_worker'] as String? ?? '';
+        _addDebugLog('← hub_status: $_activeWorker');
+        if (_activeWorker == 'pc') {
+          _hubStatusText = 'PC conectada';
+        } else if (_activeWorker == 'cel') {
+          _hubStatusText = 'Cel Home (respaldo)';
+        } else if (_activeWorker == 'offline') {
+          _hubStatusText = 'PC Desconectada / worker_offline';
+        }
+        notifyListeners();
+        return;
+      }
+      if (decoded is Map<String, dynamic> && decoded['type'] == 'options') {
+        final data = decoded['data'];
+        if (data is Map<String, dynamic> &&
+            _optionsCompleter != null &&
+            !_optionsCompleter!.isCompleted) {
+          _optionsCompleter!.complete(data);
+        }
+        return;
+      }
+    } catch (_) {}
     try {
       final ev = AgentEvent.fromRawJson(raw);
+      _addDebugLog('← ${ev.type.name}${ev.done ? " (done)" : ""}');
       switch (ev.type) {
         case AgentEventType.state:
           if (ev.state != null) {
@@ -422,8 +680,7 @@ class AgyWsClient extends ChangeNotifier {
         case AgentEventType.notify:
           final title = ev.title.isNotEmpty ? ev.title : 'HyprAgent';
           final body = ev.text.isNotEmpty ? ev.text : 'Tarea completada en tu PC';
-          _notifications.insert(
-            0,
+          _notifications.add(
             ChatMessage(
               id: 'n_${DateTime.now().microsecondsSinceEpoch}',
               isUser: false,
@@ -432,7 +689,7 @@ class AgyWsClient extends ChangeNotifier {
             ),
           );
           if (_notifications.length > 50) {
-            _notifications.removeLast();
+            _notifications.removeAt(0);
           }
           _unreadNotifications++;
           notifyListeners();
@@ -451,6 +708,7 @@ class AgyWsClient extends ChangeNotifier {
             ),
           );
           _activeStreamingMsgId = null;
+          _activity = AgentActivity.idle;
           _setCharacterState(CharacterState.idle);
           break;
 
@@ -459,6 +717,29 @@ class AgyWsClient extends ChangeNotifier {
             _activity = ev.activity!;
             notifyListeners();
           }
+          break;
+
+        case AgentEventType.permissionRequest:
+          if (ev.message.isEmpty) break;
+          if (ev.done) {
+            _pendingPermissions.removeWhere((p) => p.id == ev.message);
+            LocalNotifier.cancelPermission(ev.message);
+          } else if (!_pendingPermissions.any((p) => p.id == ev.message)) {
+            _pendingPermissions.add(PermissionRequest(
+              id: ev.message,
+              tool: ev.toolStatus,
+              detail: ev.text,
+              workspace: ev.title,
+              receivedAt: DateTime.now(),
+            ));
+            LocalNotifier.showPermission(
+              ev.message,
+              ev.toolStatus,
+              ev.text,
+              ev.title,
+            );
+          }
+          notifyListeners();
           break;
 
         case AgentEventType.unknown:
@@ -473,10 +754,25 @@ class AgyWsClient extends ChangeNotifier {
   void _upsertStreamingMessage(AgentEvent ev) {
     if (ev.text.isEmpty && ev.toolStatus.isEmpty && !ev.done) return;
 
-    if (_activeStreamingMsgId == null) {
+    final currentSid = _activeSessionId ?? 'default';
+    final sid = ev.sessionId.isNotEmpty
+        ? ev.sessionId
+        : (_streamingTargetSessionId ?? currentSid);
+    final targetList = (sid != currentSid)
+        ? (_sessions
+                .where((s) => s.id == sid)
+                .firstOrNull
+                ?.messages ??
+            _messages)
+        : _messages;
+
+    final streamId = _sessionStreamingMsgIds[sid];
+    if (streamId == null) {
       final id = 'a_${DateTime.now().microsecondsSinceEpoch}';
-      _activeStreamingMsgId = id;
-      _messages.add(
+      if (!ev.done) {
+        _sessionStreamingMsgIds[sid] = id;
+      }
+      targetList.add(
         ChatMessage(
           id: id,
           isUser: false,
@@ -487,10 +783,10 @@ class AgyWsClient extends ChangeNotifier {
         ),
       );
     } else {
-      final idx = _messages.lastIndexWhere((m) => m.id == _activeStreamingMsgId);
+      final idx = targetList.lastIndexWhere((m) => m.id == streamId);
       if (idx != -1) {
-        final prev = _messages[idx];
-        _messages[idx] = prev.copyWith(
+        final prev = targetList[idx];
+        targetList[idx] = prev.copyWith(
           text: ev.text.isNotEmpty ? ev.text : prev.text,
           toolStatus: ev.done ? '' : ev.toolStatus,
           isStreaming: !ev.done,
@@ -499,7 +795,22 @@ class AgyWsClient extends ChangeNotifier {
     }
 
     if (ev.done) {
+      _sessionStreamingMsgIds.remove(sid);
       _activeStreamingMsgId = null;
+      if (_streamingTargetSessionId == sid) {
+        _streamingTargetSessionId = null;
+      }
+      for (final s in _sessions) {
+        if (s.id == sid) {
+          s.isWorking = false;
+          if (sid != currentSid && !ev.text.startsWith('Proyecto cambiado a ') && !ev.text.startsWith('Sesión reanudada: ')) {
+            s.hasUnread = true;
+          }
+          break;
+        }
+      }
+    _streamingTargetSessionId = _activeSessionId;
+      _activity = AgentActivity.idle;
       unawaited(_saveLocalHistory());
       if (!isAppInForeground && ev.text.trim().isNotEmpty) {
         final lines = ev.text.trim().split('\n');
@@ -519,6 +830,11 @@ class AgyWsClient extends ChangeNotifier {
     _socket = null;
     _isConnecting = false;
     _activeStreamingMsgId = null;
+    // The server only broadcasts once; after a reconnect these buttons could never resolve.
+    for (final p in _pendingPermissions) {
+      LocalNotifier.cancelPermission(p.id);
+    }
+    _pendingPermissions.clear();
 
     // Si la PC se suspende o pierde conexión, el personaje pasa a sleeping
     _setCharacterState(CharacterState.sleeping);

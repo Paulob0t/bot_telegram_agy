@@ -10,17 +10,18 @@ void main() {
 
   const defaultUrl = String.fromEnvironment(
     'AGY_WS_URL',
-    defaultValue: 'ws://100.90.208.26:8080/ws',
+    defaultValue: '',
   );
   const defaultToken = String.fromEnvironment(
     'AGY_WS_TOKEN',
-    defaultValue: 'agy_ws_0f7f9d32ac8e0cd248569b8c43f0ada3',
+    defaultValue: '',
   );
 
   final client = AgyWsClient(
     wsUrl: defaultUrl,
     bearerToken: defaultToken,
   );
+  LocalNotifier.onPermissionAction = client.respondPermission;
   client.connect();
 
   runApp(PaulobotCompanionApp(client: client));

@@ -66,6 +66,8 @@ func defaultFeatures(cfg *config.Config) map[string]bool {
 		"long_buffer":     true,
 		"notify_telegram": true,
 		"notify_desktop":  true,
+		// Off by default: when on, risky Claude tool calls block until the phone answers.
+		"mobile_approvals": false,
 	}
 }
 

@@ -1,2 +1,3 @@
 #!/usr/bin/env bash
-exec /mnt/datos/Projects/telegram-paulobot/telegram-bot hook agy "$@"
+cd /mnt/datos/Projects/agente-bot || exit 1
+exec /home/paulobot/.local/bin/agente-bot hook agy "$@"

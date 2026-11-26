@@ -15,13 +15,14 @@ type AgyConversation struct {
 	ConversationID   string `json:"conversation_id"`
 	Title            string `json:"title"`
 	LastModifiedTime string `json:"last_modified_time"`
+	WorkspaceURIs    string `json:"workspace_uris"`
 }
 
 func ListAgyConversations(cfg *config.Config, limit int) []AgyConversation {
 	if _, err := os.Stat(cfg.DBPath); err != nil {
 		return nil
 	}
-	query := "SELECT conversation_id, title, last_modified_time FROM conversation_summaries WHERE title != '' ORDER BY last_modified_time DESC"
+	query := "SELECT conversation_id, title, last_modified_time, workspace_uris FROM conversation_summaries WHERE title != '' ORDER BY last_modified_time DESC"
 	cmd := exec.Command("sqlite3", "-json", cfg.DBPath, query)
 	out, err := cmd.Output()
 	if err != nil || len(out) == 0 {

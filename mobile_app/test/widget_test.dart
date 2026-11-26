@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:paulobot_mobile/main.dart';
 import 'package:paulobot_mobile/models/agent_event.dart';
@@ -6,6 +7,8 @@ import 'package:paulobot_mobile/services/ws_client.dart';
 import 'package:paulobot_mobile/widgets/rive_avatar.dart';
 
 void main() {
+  setUp(() => FlutterSecureStorage.setMockInitialValues({'hub_relay_enabled': 'false'}));
+
   testWidgets('CompanionScreen renderiza RiveCompanionAvatar y estado sleeping cuando PC está offline',
       (WidgetTester tester) async {
     final client = AgyWsClient(
@@ -19,21 +22,13 @@ void main() {
     expect(find.textContaining('HyprAgent'), findsOneWidget);
     expect(client.characterState, CharacterState.sleeping);
 
-    // Abrir menú hamburguesa y entrar a Ajustes
+    // Abrir menú de comandos: el flujo de chat arranca en "Nuevo chat"
     await tester.tap(find.byIcon(Icons.drag_handle));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 350));
-    await tester.scrollUntilVisible(
-      find.text('Ajustes y conexión'),
-      200,
-      scrollable: find.byType(Scrollable).last,
-    );
-    await tester.tap(find.text('Ajustes y conexión'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 350));
 
-    expect(find.text('Configuración del Asistente'), findsOneWidget);
-    expect(find.text('Guardar y Reconectar'), findsOneWidget);
+    expect(find.text('Nuevo chat'), findsOneWidget);
+    expect(find.text('Aprobar herramientas (on/off)'), findsOneWidget);
 
     client.dispose();
   });
