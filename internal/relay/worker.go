@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -117,18 +118,8 @@ func connectAndServeWorker(ctx context.Context, cfg *config.Config, st *state.Bo
 	})
 	defer unsub()
 
-	sessionStates := make(map[string]*state.BotSessionState)
 	getSessionState := func(sid string) *state.BotSessionState {
-		sid = strings.TrimSpace(sid)
-		if sid == "" || sid == "default" {
-			return st
-		}
-		if existing, ok := sessionStates[sid]; ok {
-			return existing
-		}
-		sess := st.NewSession()
-		sessionStates[sid] = sess
-		return sess
+		return chatSessions.get(st, sid)
 	}
 
 	for {
@@ -178,6 +169,30 @@ func connectAndServeWorker(ctx context.Context, cfg *config.Config, st *state.Bo
 			})
 		}(req, sessSt)
 	}
+}
+
+// chatSessions outlives each hub connection: a phone or tunnel drop must not
+// reset the project and conversation of the app's open chats.
+var chatSessions = sessionRegistry{byID: map[string]*state.BotSessionState{}}
+
+type sessionRegistry struct {
+	mu   sync.Mutex
+	byID map[string]*state.BotSessionState
+}
+
+func (r *sessionRegistry) get(global *state.BotSessionState, sid string) *state.BotSessionState {
+	sid = strings.TrimSpace(sid)
+	if sid == "" || sid == "default" {
+		return global
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if existing, ok := r.byID[sid]; ok {
+		return existing
+	}
+	sess := global.NewSession()
+	r.byID[sid] = sess
+	return sess
 }
 
 func buildWorkerWSURL(hubURL string) (string, error) {
