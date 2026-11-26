@@ -44,7 +44,12 @@ func BuildOptions(cfg *config.Config, st *state.BotSessionState) map[string]any 
 	}
 
 	_, activeModID, _ := models.GetEffectiveModelInfo(cfg, st)
+	activeChat := st.CurrentConversationID
+	if st.CurrentEngine == "claude" {
+		activeChat = st.ClaudeSessionID
+	}
 	return map[string]any{
+		"active_chat":  activeChat,
 		"ok":           true,
 		"engine":       st.CurrentEngine,
 		"active_model": activeModID,

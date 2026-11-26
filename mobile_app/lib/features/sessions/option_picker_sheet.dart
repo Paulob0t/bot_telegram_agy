@@ -100,6 +100,8 @@ List<_PickerItem> _projectItems(Map<String, dynamic> data) {
 
 List<_PickerItem> _resumeItems(Map<String, dynamic> data) {
   final raw = data['chats'] as List? ?? [];
+  // The chat this session is on, so the list matches what the PC will continue.
+  final activeChat = data['active_chat'] as String? ?? '';
   return [
     if (!raw.any((c) => c['id'] == newChatId))
       (
@@ -113,7 +115,7 @@ List<_PickerItem> _resumeItems(Map<String, dynamic> data) {
         label: c['title'] as String? ?? c['id'] as String? ?? '',
         sub: c['id'] as String? ?? '',
         command: '/resume ${c['id'] ?? ''}',
-        active: false,
+        active: activeChat.isNotEmpty && c['id'] == activeChat,
       ),
   ];
 }

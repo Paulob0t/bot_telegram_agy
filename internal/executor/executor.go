@@ -205,6 +205,7 @@ func RunPromptWithEvents(ctx context.Context, cfg *config.Config, st *state.BotS
 
 	var accumulated strings.Builder
 	var toolStatus string
+	var streamConvID string
 	sc := bufio.NewScanner(stdout)
 	sc.Buffer(make([]byte, 64*1024), 2*1024*1024)
 
@@ -254,6 +255,11 @@ func RunPromptWithEvents(ctx context.Context, cfg *config.Config, st *state.BotS
 		}
 
 		switch evType {
+		case "init":
+			// AGY names the conversation it opened; reliable even with parallel chats.
+			if id, ok := ev["conversation_id"].(string); ok && id != "" {
+				streamConvID = id
+			}
 		case "step_update":
 			if step, ok := ev["step_update"].(map[string]any); ok {
 				if delta, ok := step["text_delta"].(string); ok && delta != "" {
@@ -352,7 +358,11 @@ func RunPromptWithEvents(ctx context.Context, cfg *config.Config, st *state.BotS
 
 	if !isClaude {
 		if usedConvID == "" || usedConvID == "NEW" || usedConvID == "LATEST" {
-			if id := chats.NewestAgyConversationSince(cfg, runStart); id != "" {
+			id := streamConvID
+			if id == "" {
+				id = chats.NewestAgyConversationSince(cfg, runStart)
+			}
+			if id != "" {
 				st.SetAgyConversation(id, "💬 "+chats.GetAgyConversationTitle(cfg, id), execCWD)
 			}
 		} else {
