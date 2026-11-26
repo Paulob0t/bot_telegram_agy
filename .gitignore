@@ -3,16 +3,16 @@
 .env.*
 !.env.example
 
-# Caché de Python
-__pycache__/
-*.py[cod]
-*$py.class
-.venv/
-venv/
-
 # Logs
 *.log
 
-# Go binary & Python venv
-telegram-bot
-.venv/
+# Binarios de Go (make build-pc / build-android)
+/agente-bot
+/agente-bot-*
+
+# Artefactos de Flutter
+mobile_app/.dart_tool/
+mobile_app/build/
+
+# Documentos locales
+Contabilidad_Submodulo2_Cierre_y_Balanza.pdf

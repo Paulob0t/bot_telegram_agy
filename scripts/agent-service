@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SERVICE="telegram-bot.service"
+SERVICE="agent.service"
 
 is_running() {
   systemctl --user is-active --quiet "$SERVICE"

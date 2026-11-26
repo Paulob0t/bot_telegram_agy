@@ -5,8 +5,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/mnt/datos/Projects/telegram-paulobot/telegram-bot
-WorkingDirectory=/mnt/datos/Projects/telegram-paulobot
+ExecStart=/mnt/datos/Projects/agente-bot/agente-bot
+WorkingDirectory=/mnt/datos/Projects/agente-bot
 Restart=always
 RestartSec=3
 MemoryHigh=600M
@@ -14,7 +14,7 @@ MemoryMax=1200M
 OOMPolicy=continue
 Environment=PATH=/home/paulobot/.local/bin:/home/paulobot/.gemini/antigravity-cli/bin:/usr/local/sbin:/usr/local/bin:/usr/bin:/bin
 Environment=HOME=/home/paulobot
-EnvironmentFile=-/mnt/datos/Projects/telegram-paulobot/.env
+EnvironmentFile=-/mnt/datos/Projects/agente-bot/.env
 StandardOutput=append:/home/paulobot/.local/state/telegram-bot.log
 StandardError=append:/home/paulobot/.local/state/telegram-bot.log
 

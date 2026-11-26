@@ -1,2 +1,0 @@
-#!/usr/bin/env bash
-exec /mnt/datos/Projects/telegram-paulobot/telegram-bot notify "$@"
