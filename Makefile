@@ -1,4 +1,4 @@
-.PHONY: build-pc build-android test install
+.PHONY: build-pc build-android test install deploy-cel
 
 BINARY_NAME := agente-bot
 
@@ -12,6 +12,9 @@ test:
 	go test ./...
 
 # Installs the binary the Claude/AGY hooks call and links the .env they read.
+deploy-cel:
+	./scripts/deploy-cel.sh
+
 install:
 	go build -o $(HOME)/.local/bin/$(BINARY_NAME) ./cmd/bot
 	go build -o $(CURDIR)/$(BINARY_NAME) ./cmd/bot
